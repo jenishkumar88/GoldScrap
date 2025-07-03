@@ -741,18 +741,56 @@ void CheckEntryConditions()
 }
 
 
-// --- Breakout Scalping Strategy ---
+// --- Breakout Scalping Strategy with Advanced Filters ---
 bool BreakoutStrategySignal()
 {
     int rangeBars = 10;
     double atrThreshold = 30 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    // --- ATR ---
-    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, rangeBars);
-    double atrBuffer[1];
-    if(CopyBuffer(atrHandle, 0, 1, 1, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    int shift = 1;
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minBodyRatio = 0.5;
+    int adxPeriod = 14;
+    double minADX = 25.0;
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- ATR filter ---
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    double buffer = 0.5 * atr;
+    if(atr < minATR) return false;
+
+    // --- ADX filter ---
+    int adxHandle = iADX(_Symbol, PERIOD_CURRENT, adxPeriod);
+    double adxBuffer[2];
+    if(CopyBuffer(adxHandle, 0, shift, 2, adxBuffer) <= 0) { IndicatorRelease(adxHandle); return false; }
+    double adx = adxBuffer[0];
+    IndicatorRelease(adxHandle);
+    if(adx < minADX) return false;
+
+    // --- MACD confirmation ---
+    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
+    double macdMain[1], macdSignal[1];
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    double macd = macdMain[0], macdSig = macdSignal[0];
+    IndicatorRelease(macdHandle);
+
+    // --- H1 Trend filter ---
+    int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double fastH1[1], slowH1[1];
+    bool uptrend = false, downtrend = false;
+    if(CopyBuffer(emaFastH1, 0, 0, 1, fastH1) > 0 && CopyBuffer(emaSlowH1, 0, 0, 1, slowH1) > 0) {
+        uptrend = fastH1[0] > slowH1[0];
+        downtrend = fastH1[0] < slowH1[0];
+    }
+    IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
+
     // --- Range ---
     double rangeHigh = iHigh(_Symbol, PERIOD_CURRENT, 1);
     double rangeLow = iLow(_Symbol, PERIOD_CURRENT, 1);
@@ -762,37 +800,75 @@ bool BreakoutStrategySignal()
         if(h > rangeHigh) rangeHigh = h;
         if(l < rangeLow) rangeLow = l;
     }
-    if(atr < atrThreshold) return false;
+    double bandWidth = rangeHigh - rangeLow;
+    if(bandWidth < minEMADist) return false;
+
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
     // --- RSI ---
     int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
     double rsiBuffer[1];
-    if(CopyBuffer(rsiHandle, 0, 1, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
+    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
     double rsi = rsiBuffer[0];
     IndicatorRelease(rsiHandle);
 
+    // --- Candle quality ---
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double body = MathAbs(close - open);
+    if(body < minBodyRatio * atr) return false;
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.2 * candleRange);
+    bool strongBear = (close <= low + 0.2 * candleRange);
+
     // Buy breakout
-    if(ask > rangeHigh + buffer && rsi > 55) {   
-        OpenTrade(ORDER_TYPE_BUY, rangeLow, rangeHigh + (rangeHigh - rangeLow), "Breakout Buy");
-        return true;
+    if(ask > rangeHigh && rsi > 55 && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double sl = rangeLow - 1.2 * atr;
+        double tp = close + (close - sl) * 1.5;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Breakout Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
     }
     // Sell breakout
-    if(bid < rangeLow - buffer && rsi < 45) {
-        OpenTrade(ORDER_TYPE_SELL, rangeHigh, rangeLow - (rangeHigh - rangeLow), "Breakout Sell");
-        return true;
+    if(bid < rangeLow && rsi < 45 && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double sl = rangeHigh + 1.2 * atr;
+        double tp = close - (sl - close) * 1.5;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Breakout Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
     }
-    // If you use custom indicators with handles, release them here (IndicatorRelease(handle));
     return false;
 } 
 
-// --- Pullback Scalping Strategy ---
+// --- Pullback Scalping Strategy with Advanced Filters ---
 bool PullbackScalpingStrategySignal()
 {
     int emaFastPeriod = 20;
     int emaSlowPeriod = 50;
     int shift = 1; // previous closed bar
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Minimum ATR
+    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Minimum EMA distance
+    double minBodyRatio = 0.5; // Candle body at least 50% of ATR
+    int adxPeriod = 14;
+    double minADX = 25.0;
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- ATR filter ---
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    if(atr < minATR) return false;
+
     // --- EMA handles ---
     int emaFastHandle = iMA(_Symbol, PERIOD_CURRENT, emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
     int emaSlowHandle = iMA(_Symbol, PERIOD_CURRENT, emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
@@ -803,64 +879,120 @@ bool PullbackScalpingStrategySignal()
     IndicatorRelease(emaSlowHandle);
     double prevEmaFast = emaFast[1];
     double prevEmaSlow = emaSlow[1];
+    double currEmaFast = emaFast[0];
+    double currEmaSlow = emaSlow[0];
+    double emaDist = MathAbs(currEmaFast - currEmaSlow);
+    if(emaDist < minEMADist) return false;
+
+    // --- ADX filter ---
+    int adxHandle = iADX(_Symbol, PERIOD_CURRENT, adxPeriod);
+    double adxBuffer[2];
+    if(CopyBuffer(adxHandle, 0, shift, 2, adxBuffer) <= 0) { IndicatorRelease(adxHandle); return false; }
+    double adx = adxBuffer[0];
+    IndicatorRelease(adxHandle);
+    if(adx < minADX) return false;
+
+    // --- MACD confirmation ---
+    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
+    double macdMain[1], macdSignal[1];
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    double macd = macdMain[0], macdSig = macdSignal[0];
+    IndicatorRelease(macdHandle);
+
+    // --- H1 Trend filter ---
+    int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double fastH1[1], slowH1[1];
+    bool uptrend = false, downtrend = false;
+    if(CopyBuffer(emaFastH1, 0, 0, 1, fastH1) > 0 && CopyBuffer(emaSlowH1, 0, 0, 1, slowH1) > 0) {
+        uptrend = fastH1[0] > slowH1[0];
+        downtrend = fastH1[0] < slowH1[0];
+    }
+    IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
+
     double close = iClose(_Symbol, PERIOD_CURRENT, shift);
     double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
-    double prevClose = iClose(_Symbol, PERIOD_CURRENT, shift+1);
-    double prevOpen = iOpen(_Symbol, PERIOD_CURRENT, shift+1);
-    double prevHigh = iHigh(_Symbol, PERIOD_CURRENT, shift+1);
-    double prevLow = iLow(_Symbol, PERIOD_CURRENT, shift+1);
+    double body = MathAbs(close - open);
+    if(body < minBodyRatio * atr) return false;
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.2 * candleRange);
+    bool strongBear = (close <= low + 0.2 * candleRange);
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    // --- Uptrend: EMA20 > EMA50 ---
-    if(prevEmaFast > prevEmaSlow) {
+
+    // --- Uptrend: EMA20 > EMA50, H1 uptrend, ADX, MACD, candle quality ---
+    if(prevEmaFast > prevEmaSlow && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         // Pullback: price at or below EMA20
         if(close <= prevEmaFast + 2*point) {
-            // Pin bar: long lower wick
-            double body = MathAbs(close - open);
-            double lowerWick = MathMin(open, close) - low;
-            double upperWick = high - MathMax(open, close);
-            if(lowerWick > 2*body && lowerWick > upperWick) {
-                double sl= low - 2*point ;
-                OpenTrade(ORDER_TYPE_BUY, sl, close + (close - sl) * 1.5, "Pullback PinBar Buy");
-                return true;
-            }
-            // Bullish engulfing
-            if(close > open && prevClose < prevOpen && close > prevOpen && open < prevClose) {
-                double sl= low - 2*point ;  
-                OpenTrade(ORDER_TYPE_BUY, sl, close + (close - sl) * 1.5, "Pullback Engulf Buy");
-                return true;
-            }
+            double sl = low - 1.2 * atr; // ATR-based tighter SL
+            OpenTrade(ORDER_TYPE_BUY, sl, close + (close - sl) * 1.5, "Pullback PinBar Buy");
+            lastBuyBar = currentBar;
+            return true;
         }
     }
-    // --- Downtrend: EMA20 < EMA50 ---
-    if(prevEmaFast < prevEmaSlow) {
+    // --- Downtrend: EMA20 < EMA50, H1 downtrend, ADX, MACD, candle quality ---
+    if(prevEmaFast < prevEmaSlow && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         // Pullback: price at or above EMA20
         if(close >= prevEmaFast - 2*point) {
-            // Pin bar: long upper wick
-            double body = MathAbs(close - open);
-            double upperWick = high - MathMax(open, close);
-            double lowerWick = MathMin(open, close) - low;
-            if(upperWick > 2*body && upperWick > lowerWick) {
-                double sl= high + 2*point;  
-                OpenTrade(ORDER_TYPE_SELL, sl, close - (sl - close) * 1.5, "Pullback PinBar Sell");
-                return true;
-            }
-            // Bearish engulfing
-            if(close < open && prevClose > prevOpen && close < prevOpen && open > prevClose) {
-                double sl= high + 2*point;
-                OpenTrade(ORDER_TYPE_SELL, sl, close - (sl - close) * 1.5, "Pullback Engulf Sell");
-                return true;
-            }
+            double sl = high + 1.2 * atr; // ATR-based tighter SL
+            OpenTrade(ORDER_TYPE_SELL, sl, close - (sl - close) * 1.5, "Pullback PinBar Sell");
+            lastSellBar = currentBar;
+            return true;
         }
     }
     return false;
 } 
 
-// --- Trend-Following MA Cross Strategy ---
+// --- Trend-Following MA Cross Strategy with Advanced Filters ---
 bool TrendMACrossStrategySignal()
 {
     int fastMAPeriod = 9, slowMAPeriod = 21, shift = 1;
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minBodyRatio = 0.5;
+    int adxPeriod = 14;
+    double minADX = 25.0;
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- ATR filter ---
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    if(atr < minATR) return false;
+
+    // --- ADX filter ---
+    int adxHandle = iADX(_Symbol, PERIOD_CURRENT, adxPeriod);
+    double adxBuffer[2];
+    if(CopyBuffer(adxHandle, 0, shift, 2, adxBuffer) <= 0) { IndicatorRelease(adxHandle); return false; }
+    double adx = adxBuffer[0];
+    IndicatorRelease(adxHandle);
+    if(adx < minADX) return false;
+
+    // --- MACD confirmation ---
+    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
+    double macdMain[1], macdSignal[1];
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    double macd = macdMain[0], macdSig = macdSignal[0];
+    IndicatorRelease(macdHandle);
+
+    // --- H1 Trend filter ---
+    int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double fastH1[1], slowH1[1];
+    bool uptrend = false, downtrend = false;
+    if(CopyBuffer(emaFastH1, 0, 0, 1, fastH1) > 0 && CopyBuffer(emaSlowH1, 0, 0, 1, slowH1) > 0) {
+        uptrend = fastH1[0] > slowH1[0];
+        downtrend = fastH1[0] < slowH1[0];
+    }
+    IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
+
     // --- M5 EMA handles ---
     int fastMAHandle = iMA(_Symbol, PERIOD_CURRENT, fastMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
     int slowMAHandle = iMA(_Symbol, PERIOD_CURRENT, slowMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
@@ -870,55 +1002,41 @@ bool TrendMACrossStrategySignal()
     IndicatorRelease(fastMAHandle); IndicatorRelease(slowMAHandle);
     double prevFast = fastMA[1], prevSlow = slowMA[1];
     double currFast = fastMA[0], currSlow = slowMA[0];
+    double emaDist = MathAbs(currFast - currSlow);
+    if(emaDist < minEMADist) return false;
+
+    // --- Candle quality ---
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double body = MathAbs(close - open);
+    if(body < minBodyRatio * atr) return false;
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.2 * candleRange);
+    bool strongBear = (close <= low + 0.2 * candleRange);
+
     // --- Cross detection ---
     bool crossUp = (prevFast <= prevSlow && currFast > currSlow);
     bool crossDown = (prevFast >= prevSlow && currFast < currSlow);
-    // --- RSI confirmation ---
-    int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
-    double rsiBuffer[1];
-    if(CopyBuffer(rsiHandle, 0, 1, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
-    double rsi = rsiBuffer[0];
-    IndicatorRelease(rsiHandle);
-    // --- MACD confirmation ---
-    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
-    double macdMain[1], macdSignal[1];
-    if(CopyBuffer(macdHandle, 0, 1, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
-    if(CopyBuffer(macdHandle, 1, 1, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
-    double macd = macdMain[0];
-    IndicatorRelease(macdHandle);
-    // --- Higher timeframe (H1) filter ---
-    int fastMAH1Handle = iMA(_Symbol, PERIOD_H1, fastMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
-    int slowMAH1Handle = iMA(_Symbol, PERIOD_H1, slowMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
-    double fastMAH1[1], slowMAH1[1];
-    if(CopyBuffer(fastMAH1Handle, 0, 1, 1, fastMAH1) <= 0) { IndicatorRelease(fastMAH1Handle); IndicatorRelease(slowMAH1Handle); return false; }
-    if(CopyBuffer(slowMAH1Handle, 0, 1, 1, slowMAH1) <= 0) { IndicatorRelease(fastMAH1Handle); IndicatorRelease(slowMAH1Handle); return false; }
-    IndicatorRelease(fastMAH1Handle); IndicatorRelease(slowMAH1Handle);
-    double fastH1 = fastMAH1[0], slowH1 = slowMAH1[0];
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    
+
     // --- Buy signal ---
-    if(crossUp && rsi > 55 && macd > 0 && fastH1 > slowH1) {
-        // SL: recent swing low
-        double slCandidate = iLow(_Symbol, PERIOD_CURRENT, shift);
-        for(int i=shift+1; i<=shift+5; i++) {
-            double l = iLow(_Symbol, PERIOD_CURRENT, i);
-            if(l < slCandidate) slCandidate = l;
+    if(crossUp && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double sl = low - 1.2 * atr;
+        double tp = close + (close - sl) * 1.5;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "MA Cross Buy")) {
+            lastBuyBar = currentBar;
+            return true;
         }
-        double sl = slCandidate - 2*point;
-        OpenTrade(ORDER_TYPE_BUY, sl, currFast + 1.5 * (currFast - sl), "MA Cross Buy");
-        return true;
     }
     // --- Sell signal ---
-    if(crossDown && rsi < 45 && macd < 0 && fastH1 < slowH1) {
-        // SL: recent swing high
-        double slCandidate = iHigh(_Symbol, PERIOD_CURRENT, shift);
-        for(int i=shift+1; i<=shift+5; i++) {
-            double h = iHigh(_Symbol, PERIOD_CURRENT, i);
-            if(h > slCandidate) slCandidate = h;
+    if(crossDown && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double sl = high + 1.2 * atr;
+        double tp = close - (sl - close) * 1.5;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "MA Cross Sell")) {
+            lastSellBar = currentBar;
+            return true;
         }
-        double sl = slCandidate + 2*point;
-        OpenTrade(ORDER_TYPE_SELL, sl, currFast - 1.5 * (sl - currFast), "MA Cross Sell");
-        return true;
     }
     return false;
 } 
@@ -1048,32 +1166,68 @@ bool BollingerBandBreakoutStrategySignal()
     return false;
 } 
 
-// --- Stochastic Oscillator Reversal Strategy with Dynamic Filters ---
+// --- Stochastic Oscillator Reversal Strategy with Advanced Filters ---
 bool StochasticReversalStrategySignal()
 {
-    // Dynamic parameters
     int kPeriod = 14, dPeriod = 3, slowing = 3;
     double overbought = 80.0, oversold = 20.0;
-    double minVolatility = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // ATR filter
-    int minVolume = 100; // Minimum tick volume
-    double minBodyRatio = 0.5; // Candle body at least 50% of ATR
-    int consecutiveTradeLimit = 1; // Only 1 trade per direction per N bars
+    double minVolatility = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minBodyRatio = 0.5;
+    int adxPeriod = 14;
+    double minADX = 25.0;
+    int consecutiveTradeLimit = 1;
     static int lastBuyBar = -1000, lastSellBar = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
     int shift = 1;
 
     // --- ATR filter ---
-    int atrPeriod = 14;
-    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
     double atrBuffer[2];
     if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    if(atr < minVolatility) return false;
+    if(atr < minATR) return false;
 
-    // --- Volume filter ---
-    long tickVolume = iVolume(_Symbol, PERIOD_CURRENT, shift);
-    if(tickVolume < minVolume) return false;
+    // --- ADX filter ---
+    int adxHandle = iADX(_Symbol, PERIOD_CURRENT, adxPeriod);
+    double adxBuffer[2];
+    if(CopyBuffer(adxHandle, 0, shift, 2, adxBuffer) <= 0) { IndicatorRelease(adxHandle); return false; }
+    double adx = adxBuffer[0];
+    IndicatorRelease(adxHandle);
+    if(adx < minADX) return false;
+
+    // --- MACD confirmation ---
+    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
+    double macdMain[1], macdSignal[1];
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    double macd = macdMain[0], macdSig = macdSignal[0];
+    IndicatorRelease(macdHandle);
+
+    // --- H1 Trend filter ---
+    int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double fastH1[1], slowH1[1];
+    bool uptrend = false, downtrend = false;
+    if(CopyBuffer(emaFastH1, 0, 0, 1, fastH1) > 0 && CopyBuffer(emaSlowH1, 0, 0, 1, slowH1) > 0) {
+        uptrend = fastH1[0] > slowH1[0];
+        downtrend = fastH1[0] < slowH1[0];
+    }
+    IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
+
+    // --- EMA handles ---
+    int emaFastHandle = iMA(_Symbol, PERIOD_CURRENT, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowHandle = iMA(_Symbol, PERIOD_CURRENT, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double emaFast[2], emaSlow[2];
+    if(CopyBuffer(emaFastHandle, 0, shift, 2, emaFast) <= 0) { IndicatorRelease(emaFastHandle); IndicatorRelease(emaSlowHandle); return false; }
+    if(CopyBuffer(emaSlowHandle, 0, shift, 2, emaSlow) <= 0) { IndicatorRelease(emaFastHandle); IndicatorRelease(emaSlowHandle); return false; }
+    IndicatorRelease(emaFastHandle); IndicatorRelease(emaSlowHandle);
+    double currEmaFast = emaFast[0];
+    double currEmaSlow = emaSlow[0];
+    double emaDist = MathAbs(currEmaFast - currEmaSlow);
+    if(emaDist < minEMADist) return false;
 
     // --- Stochastic ---
     int stochHandle = iStochastic(_Symbol, PERIOD_CURRENT, kPeriod, dPeriod, slowing, MODE_SMA, 0);
@@ -1087,10 +1241,74 @@ bool StochasticReversalStrategySignal()
     // --- Candle body filter ---
     double close = iClose(_Symbol, PERIOD_CURRENT, shift);
     double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
     double body = MathAbs(close - open);
     if(body < minBodyRatio * atr) return false;
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.2 * candleRange);
+    bool strongBear = (close <= low + 0.2 * candleRange);
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
 
-    // --- Trend filter (H1 EMA20/EMA50) ---
+    // --- Buy reversal: K crosses above D in oversold, uptrend, limit trades ---
+    if(prevK < prevD && currK > currD && prevK < oversold && currK > oversold && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double sl = low - 1.2 * atr;
+        double tp = close + (close - sl) * 1.5;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Stoch Reversal Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
+    }
+    // --- Sell reversal: K crosses below D in overbought, downtrend, limit trades ---
+    if(prevK > prevD && currK < currD && prevK > overbought && currK < overbought && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double sl = high + 1.2 * atr;
+        double tp = close - (sl - close) * 1.5;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Stoch Reversal Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
+    }
+    return false;
+} 
+
+// --- VWAP Bounce Strategy with Advanced Filters ---
+bool VWAPBounceStrategySignal()
+{
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minBodyRatio = 0.5;
+    int adxPeriod = 14;
+    double minADX = 25.0;
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+    int shift = 1;
+
+    // --- ATR filter ---
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    if(atr < minATR) return false;
+
+    // --- ADX filter ---
+    int adxHandle = iADX(_Symbol, PERIOD_CURRENT, adxPeriod);
+    double adxBuffer[2];
+    if(CopyBuffer(adxHandle, 0, shift, 2, adxBuffer) <= 0) { IndicatorRelease(adxHandle); return false; }
+    double adx = adxBuffer[0];
+    IndicatorRelease(adxHandle);
+    if(adx < minADX) return false;
+
+    // --- MACD confirmation ---
+    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
+    double macdMain[1], macdSignal[1];
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    double macd = macdMain[0], macdSig = macdSignal[0];
+    IndicatorRelease(macdHandle);
+
+    // --- H1 Trend filter ---
     int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
     int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
     double fastH1[1], slowH1[1];
@@ -1101,59 +1319,21 @@ bool StochasticReversalStrategySignal()
     }
     IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
 
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
-    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
-
-    // --- Buy reversal: K crosses above D in oversold, uptrend, limit trades ---
-    if(prevK < prevD && currK > currD && prevK < oversold && currK > oversold && uptrend && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
-        double sl = low - 2 * point;
-        double tp = close + (close - sl) * 1.5;
-        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Stoch Reversal Buy")) {
-            lastBuyBar = currentBar;
-            return true;
-        }
-    }
-    // --- Sell reversal: K crosses below D in overbought, downtrend, limit trades ---
-    if(prevK > prevD && currK < currD && prevK > overbought && currK < overbought && downtrend && (currentBar - lastSellBar > consecutiveTradeLimit)) {
-        double sl = high + 2 * point;
-        double tp = close - (sl - close) * 1.5;
-        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Stoch Reversal Sell")) {
-            lastSellBar = currentBar;
-            return true;
-        }
-    }
-    return false;
-} 
-
-// --- VWAP Bounce Strategy with Dynamic Filters ---
-bool VWAPBounceStrategySignal()
-{
-    // Dynamic parameters
-    double minVolatility = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // ATR filter
-    int minVolume = 100; // Minimum tick volume
-    double minBodyRatio = 0.5; // Candle body at least 50% of ATR
-    int consecutiveTradeLimit = 1; // Only 1 trade per direction per N bars
-    static int lastBuyBar = -1000, lastSellBar = -1000;
-    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
-    int shift = 1;
-
-    // --- ATR filter ---
-    int atrPeriod = 14;
-    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
-    double atrBuffer[2];
-    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
-    double atr = atrBuffer[0];
-    IndicatorRelease(atrHandle);
-    if(atr < minVolatility) return false;
-
-    // --- Volume filter ---
-    long tickVolume = iVolume(_Symbol, PERIOD_CURRENT, shift);
-    if(tickVolume < minVolume) return false;
+    // --- EMA handles ---
+    int emaFastHandle = iMA(_Symbol, PERIOD_CURRENT, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowHandle = iMA(_Symbol, PERIOD_CURRENT, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double emaFast[2], emaSlow[2];
+    if(CopyBuffer(emaFastHandle, 0, shift, 2, emaFast) <= 0) { IndicatorRelease(emaFastHandle); IndicatorRelease(emaSlowHandle); return false; }
+    if(CopyBuffer(emaSlowHandle, 0, shift, 2, emaSlow) <= 0) { IndicatorRelease(emaFastHandle); IndicatorRelease(emaSlowHandle); return false; }
+    IndicatorRelease(emaFastHandle); IndicatorRelease(emaSlowHandle);
+    double currEmaFast = emaFast[0];
+    double currEmaSlow = emaSlow[0];
+    double emaDist = MathAbs(currEmaFast - currEmaSlow);
+    if(emaDist < minEMADist) return false;
 
     // --- VWAP calculation (manual, since no native iVWAP) ---
     double vwap = 0.0, totalPV = 0.0, totalVol = 0.0;
-    int vwapLookback = 30; // 30 bars for intraday VWAP
+    int vwapLookback = 30;
     for(int i = shift; i < shift + vwapLookback; i++) {
         double price = (iHigh(_Symbol, PERIOD_CURRENT, i) + iLow(_Symbol, PERIOD_CURRENT, i) + iClose(_Symbol, PERIOD_CURRENT, i)) / 3.0;
         double vol = iVolume(_Symbol, PERIOD_CURRENT, i);
@@ -1170,23 +1350,14 @@ bool VWAPBounceStrategySignal()
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
     double body = MathAbs(close - open);
     if(body < minBodyRatio * atr) return false;
-
-    // --- Trend filter (H1 EMA20/EMA50) ---
-    int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
-    int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
-    double fastH1[1], slowH1[1];
-    bool uptrend = false, downtrend = false;
-    if(CopyBuffer(emaFastH1, 0, 0, 1, fastH1) > 0 && CopyBuffer(emaSlowH1, 0, 0, 1, slowH1) > 0) {
-        uptrend = fastH1[0] > slowH1[0];
-        downtrend = fastH1[0] < slowH1[0];
-    }
-    IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
-
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.2 * candleRange);
+    bool strongBear = (close <= low + 0.2 * candleRange);
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
 
     // --- Buy bounce: price dips below VWAP and closes above, uptrend, limit trades ---
-    if(low < vwap && close > vwap && uptrend && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
-        double sl = low - 2 * point;
+    if(low < vwap && close > vwap && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double sl = low - 1.2 * atr;
         double tp = close + (close - sl) * 1.5;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "VWAP Bounce Buy")) {
             lastBuyBar = currentBar;
@@ -1194,8 +1365,8 @@ bool VWAPBounceStrategySignal()
         }
     }
     // --- Sell bounce: price spikes above VWAP and closes below, downtrend, limit trades ---
-    if(high > vwap && close < vwap && downtrend && (currentBar - lastSellBar > consecutiveTradeLimit)) {
-        double sl = high + 2 * point;
+    if(high > vwap && close < vwap && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double sl = high + 1.2 * atr;
         double tp = close - (sl - close) * 1.5;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "VWAP Bounce Sell")) {
             lastSellBar = currentBar;
