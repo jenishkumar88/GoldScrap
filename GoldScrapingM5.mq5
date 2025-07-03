@@ -760,7 +760,7 @@ bool BreakoutStrategySignal()
     int adxPeriod = 14;
     double minADX = 25.0;
     int consecutiveTradeLimit = 1;
-    static int lastBuyBar = -1000, lastSellBar = -1000;
+    static int lastBuyBar_Breakout = -1000, lastSellBar_Breakout = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
 
     // --- ATR filter ---
@@ -833,7 +833,7 @@ bool BreakoutStrategySignal()
     bool strongBear = (close <= low + 0.2 * candleRange);
 
     // Buy breakout
-    if(ask > rangeHigh && rsi > 55 && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+    if(ask > rangeHigh && rsi > 55 && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar_Breakout > consecutiveTradeLimit)) {
         double sl = rangeLow - 1.2 * atr;
         double entry = ask;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -845,12 +845,12 @@ bool BreakoutStrategySignal()
         double commission = CalculateCommissionOrSpread(LotSize);
         if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Breakout Buy")) {
-            lastBuyBar = currentBar;
+            lastBuyBar_Breakout = currentBar;
             return true;
         }
     }
     // Sell breakout
-    if(bid < rangeLow && rsi < 45 && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+    if(bid < rangeLow && rsi < 45 && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar_Breakout > consecutiveTradeLimit)) {
         double sl = rangeHigh + 1.2 * atr;
         double entry = bid;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -862,7 +862,7 @@ bool BreakoutStrategySignal()
         double commission = CalculateCommissionOrSpread(LotSize);
         if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Breakout Sell")) {
-            lastSellBar = currentBar;
+            lastSellBar_Breakout = currentBar;
             return true;
         }
     }
@@ -1530,7 +1530,7 @@ bool MeanReversionVWAPMAStrategySignal()
     double lot = LotSize;
     double maxSLDist = GetMaxSLDistance(lot);
     int consecutiveTradeLimit = 1;
-    static int lastBuyBar = -1000, lastSellBar = -1000;
+    static int lastBuyBar = -1000;
     static int lastSellBar = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
 
@@ -1890,7 +1890,8 @@ bool CCIDivergenceStrategySignal()
 
     // --- CCI ---
     int cciHandle = iCCI(_Symbol, PERIOD_CURRENT, cciPeriod, PRICE_TYPICAL);
-    double cciBuffer[lookback+2];
+    double cciBuffer[];
+    ArrayResize(cciBuffer, lookback+2);
     if(CopyBuffer(cciHandle, 0, shift, lookback+2, cciBuffer) <= 0) { IndicatorRelease(cciHandle); return false; }
     IndicatorRelease(cciHandle);
 
@@ -1967,7 +1968,7 @@ bool CCIDivergenceStrategySignal()
         }
     }
     return false;
-}
+} 
 
 // --- Order Block/Institutional Level Bounce Strategy ---
 bool OrderBlockBounceStrategySignal()
