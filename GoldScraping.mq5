@@ -20,8 +20,6 @@ input int      MaxOpenTrades = 6;               // Maximum open trades
 input group "=== RISK MANAGEMENT ==="
 input double   MaxSpread = 40.0;                // Maximum spread in points
 input int OrderDelaySeconds = 15; // Minimum seconds to wait before placing next order
-input double   MaxSL = 2.0;
-input double   MaxTP = 2.5;
 
 
 input group "=== AUTO CLOSE SETTINGS ==="
@@ -33,6 +31,7 @@ input bool     StopOnDailyLimit = true;         // Stop EA when daily limit reac
 input double   MaxDailyLoss = 70.0;            // Maximum daily loss in account currency
 input double TrailingStopDistance = 0.5; // Distance in account currency to keep SL behind current profit
 input double TrailingProfitDistance = 0.80; // Amount (in account currency) to move TP further
+input double TrailingProfitTrigger = 0.40; // Amount (in account currency) to move TP trigger
 
 //--- Global Variables
 double dailyStartBalance;
@@ -597,7 +596,7 @@ void ApplyTrailingProfit(ulong ticket)
     // Calculate commission for this specific position
     double commission = CalculateCommissionOrSpread(volume);
 
-    if(profitDifference <= commission && profitDifference > 0) {
+    if(profitDifference <= TrailingProfitTrigger && profitDifference > 0) {
         double newTPProfit = profitAtTP + TrailingProfitDistance;
         double requiredPriceDiff = (newTPProfit * tick_size) / (volume * tick_value);
         double newTP = (posType == POSITION_TYPE_BUY)
