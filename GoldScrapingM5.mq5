@@ -739,6 +739,8 @@ void CheckEntryConditions()
     if(BollingerBandBreakoutStrategySignal()) return;
     if(StochasticReversalStrategySignal()) return;
     if(VWAPBounceStrategySignal()) return;
+    if(MeanReversionVWAPMAStrategySignal()) return;
+    if(RangeChannelTradingStrategySignal()) return;
 }
 
 
@@ -1482,3 +1484,205 @@ double GetMaxSLDistance(double lot) {
     double points = (MaxSLAmount / (tickValue * lot)) * tickSize / point;
     return points * point;
 } 
+
+// --- Mean Reversion to VWAP/MA Strategy ---
+bool MeanReversionVWAPMAStrategySignal()
+{
+    int shift = 1;
+    double atrPeriod = 14;
+    double atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    double lowVolThreshold = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Low volatility threshold
+    if(atr > lowVolThreshold) return false; // Only trade in low volatility
+
+    // --- VWAP calculation (manual, since no native iVWAP) ---
+    double vwap = 0.0, totalPV = 0.0, totalVol = 0.0;
+    int vwapLookback = 30;
+    for(int i = shift; i < shift + vwapLookback; i++) {
+        double price = (iHigh(_Symbol, PERIOD_CURRENT, i) + iLow(_Symbol, PERIOD_CURRENT, i) + iClose(_Symbol, PERIOD_CURRENT, i)) / 3.0;
+        double vol = iVolume(_Symbol, PERIOD_CURRENT, i);
+        totalPV += price * vol;
+        totalVol += vol;
+    }
+    if(totalVol > 0) vwap = totalPV / totalVol;
+    else return false;
+
+    // --- MA calculation ---
+    int maPeriod = 20;
+    int maHandle = iMA(_Symbol, PERIOD_CURRENT, maPeriod, 0, MODE_EMA, PRICE_CLOSE);
+    double maBuffer[2];
+    if(CopyBuffer(maHandle, 0, shift, 2, maBuffer) <= 0) { IndicatorRelease(maHandle); return false; }
+    double ma = maBuffer[0];
+    IndicatorRelease(maHandle);
+
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double lot = LotSize;
+    double maxSLDist = GetMaxSLDistance(lot);
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    static int lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- RSI confirmation ---
+    int rsiPeriod = 14;
+    int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, rsiPeriod, PRICE_CLOSE);
+    double rsiBuffer[1];
+    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
+    double rsi = rsiBuffer[0];
+    IndicatorRelease(rsiHandle);
+
+    // --- Stochastic confirmation ---
+    int kPeriod = 14, dPeriod = 3, slowing = 3;
+    int stochHandle = iStochastic(_Symbol, PERIOD_CURRENT, kPeriod, dPeriod, slowing, MODE_SMA, 0);
+    double kBuffer[2], dBuffer[2];
+    if(CopyBuffer(stochHandle, 0, shift, 2, kBuffer) <= 0) { IndicatorRelease(stochHandle); return false; }
+    if(CopyBuffer(stochHandle, 1, shift, 2, dBuffer) <= 0) { IndicatorRelease(stochHandle); return false; }
+    IndicatorRelease(stochHandle);
+    double currK = kBuffer[0], currD = dBuffer[0];
+
+    // --- Mean reversion logic ---
+    double deviationVWAP = MathAbs(close - vwap);
+    double deviationMA = MathAbs(close - ma);
+    double minDeviation = 1.5 * atr; // Require price to be at least 1.5 ATR away from VWAP/MA
+
+    // --- Buy: price below VWAP/MA by minDeviation, RSI < 35, Stoch < 20 ---
+    if(close < vwap - minDeviation && close < ma - minDeviation && rsi < 35 && currK < 20 && currD < 20 && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = low - 1.2 * atr;
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = vwap;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "MeanRev VWAP/MA Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
+    }
+    // --- Sell: price above VWAP/MA by minDeviation, RSI > 65, Stoch > 80 ---
+    if(close > vwap + minDeviation && close > ma + minDeviation && rsi > 65 && currK > 80 && currD > 80 && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = high + 1.2 * atr;
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = vwap;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "MeanRev VWAP/MA Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- Range/Channel Trading Strategy ---
+bool RangeChannelTradingStrategySignal()
+{
+    int shift = 1;
+    int rangeBars = 30;
+    double atrPeriod = 14;
+    double atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    double lowVolThreshold = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Low volatility threshold
+    if(atr > lowVolThreshold) return false; // Only trade in low volatility
+
+    // --- Identify range ---
+    double rangeHigh = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double rangeLow = iLow(_Symbol, PERIOD_CURRENT, shift);
+    for(int i=shift+1; i<shift+rangeBars; i++) {
+        double h = iHigh(_Symbol, PERIOD_CURRENT, i);
+        double l = iLow(_Symbol, PERIOD_CURRENT, i);
+        if(h > rangeHigh) rangeHigh = h;
+        if(l < rangeLow) rangeLow = l;
+    }
+    double rangeWidth = rangeHigh - rangeLow;
+    if(rangeWidth < 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT)) return false; // Avoid too tight ranges
+
+    // --- Flat MA filter ---
+    int maPeriod = 20;
+    int maHandle = iMA(_Symbol, PERIOD_CURRENT, maPeriod, 0, MODE_SMA, PRICE_CLOSE);
+    double maBuffer[10];
+    if(CopyBuffer(maHandle, 0, shift, 10, maBuffer) <= 0) { IndicatorRelease(maHandle); return false; }
+    IndicatorRelease(maHandle);
+    double maMax = maBuffer[0], maMin = maBuffer[0];
+    for(int i=1; i<10; i++) {
+        if(maBuffer[i] > maMax) maMax = maBuffer[i];
+        if(maBuffer[i] < maMin) maMin = maBuffer[i];
+    }
+    if((maMax - maMin) > 5 * SymbolInfoDouble(_Symbol, SYMBOL_POINT)) return false; // MA not flat enough
+
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double lot = LotSize;
+    double maxSLDist = GetMaxSLDistance(lot);
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- Oscillator confirmation (Stochastic) ---
+    int kPeriod = 14, dPeriod = 3, slowing = 3;
+    int stochHandle = iStochastic(_Symbol, PERIOD_CURRENT, kPeriod, dPeriod, slowing, MODE_SMA, 0);
+    double kBuffer[2], dBuffer[2];
+    if(CopyBuffer(stochHandle, 0, shift, 2, kBuffer) <= 0) { IndicatorRelease(stochHandle); return false; }
+    if(CopyBuffer(stochHandle, 1, shift, 2, dBuffer) <= 0) { IndicatorRelease(stochHandle); return false; }
+    IndicatorRelease(stochHandle);
+    double currK = kBuffer[0], currD = dBuffer[0];
+
+    // --- Candlestick reversal: bullish/bearish engulfing ---
+    double prevClose = iClose(_Symbol, PERIOD_CURRENT, shift+1);
+    double prevOpen = iOpen(_Symbol, PERIOD_CURRENT, shift+1);
+    bool bullishEngulf = (close > open && prevClose < prevOpen && close > prevOpen && open < prevClose);
+    bool bearishEngulf = (close < open && prevClose > prevOpen && close < prevOpen && open > prevClose);
+
+    // --- Buy: price near range low, bullish engulfing, Stoch < 20 ---
+    if(close < rangeLow + 2*atr && bullishEngulf && currK < 20 && currD < 20 && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = rangeLow - 1.2 * atr;
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = rangeHigh;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Range Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
+    }
+    // --- Sell: price near range high, bearish engulfing, Stoch > 80 ---
+    if(close > rangeHigh - 2*atr && bearishEngulf && currK > 80 && currD > 80 && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = rangeHigh + 1.2 * atr;
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = rangeLow;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Range Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
+    }
+    return false;
+}
