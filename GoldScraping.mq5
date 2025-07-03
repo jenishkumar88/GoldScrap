@@ -145,6 +145,19 @@ void OnTick()
 
     string formattedDateTime = StringFormat("%04d.%02d.%02d %02d:%02d:%02d%s", dt.year, dt.mon, dt.day, hour, dt.min, dt.sec, ampm);
     Print("Gold Scalping EA  === NEW BAR TICK === Current time: ", formattedDateTime);
+
+    
+    if(AccountType == mt5_mini_real_vc || AccountType ==  mt5_classic_real_vc){
+     isCommission = false; 
+    }else{
+      isCommission = true; 
+    static datetime lastCommissionFetch = 0;
+    if(TimeCurrent() - lastCommissionFetch > 60) // every 60 seconds
+    {
+        FetchCommissionFromExness();
+        lastCommissionFetch = TimeCurrent();
+    }
+    } 
 }
 
 //+------------------------------------------------------------------+
@@ -182,18 +195,6 @@ void OnTimer()
     // Check for new entry conditions
     if(IsBelowMaxOpenTrades())
     {
-    
-        if(AccountType == mt5_mini_real_vc || AccountType ==  mt5_classic_real_vc){
-     isCommission = false; 
-    }else{
-      isCommission = true; 
-    static datetime lastCommissionFetch = 0;
-    if(TimeCurrent() - lastCommissionFetch > 60) // every 60 seconds
-    {
-        FetchCommissionFromExness();
-        lastCommissionFetch = TimeCurrent();
-    }
-    } 
         if(TimeCurrent() - lastTradeTime >= OrderDelaySeconds)
         {
             CheckEntryConditions();
@@ -515,7 +516,7 @@ void ManagePositions()
 // Helper to calculate commission for any lot size
 double CalculateCommissionOrSpread(double lot) {
     if(isCommission){
-    return commissionOrSpreadPer001Lot * (lot / 0.01) + 0.20 <= 0.20 ? 0.40 : commissionOrSpreadPer001Lot * (lot / 0.01) + 0.20 ;
+    return commissionOrSpreadPer001Lot * (lot / 0.01) + 0.10 <= 0.20 ? 0.40 : commissionOrSpreadPer001Lot * (lot / 0.01) + 0.10 ;
     }else{
      return 0.25;
     }
