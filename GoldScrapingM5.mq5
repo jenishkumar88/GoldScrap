@@ -754,11 +754,11 @@ bool BreakoutStrategySignal()
     int rangeBars = 10;
     double atrThreshold = 30 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     int shift = 1;
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minBodyRatio = 0.5;
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10, relaxed for XAUUSD M5
+    double minEMADist = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minBodyRatio = 0.35; // was 0.5
     int adxPeriod = 14;
-    double minADX = 25.0;
+    double minADX = 20.0; // was 25.0
     int consecutiveTradeLimit = 1;
     static int lastBuyBar_Breakout = -1000, lastSellBar_Breakout = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
@@ -875,11 +875,11 @@ bool PullbackScalpingStrategySignal()
     int emaFastPeriod = 20;
     int emaSlowPeriod = 50;
     int shift = 1; // previous closed bar
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Minimum ATR
-    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Minimum EMA distance
-    double minBodyRatio = 0.5; // Candle body at least 50% of ATR
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minEMADist = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minBodyRatio = 0.35; // was 0.5
     int adxPeriod = 14;
-    double minADX = 25.0;
+    double minADX = 20.0; // was 25.0
     int consecutiveTradeLimit = 1;
     static int lastBuyBar = -1000, lastSellBar = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
@@ -988,11 +988,11 @@ bool PullbackScalpingStrategySignal()
 bool TrendMACrossStrategySignal()
 {
     int fastMAPeriod = 9, slowMAPeriod = 21, shift = 1;
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minBodyRatio = 0.5;
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minEMADist = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minBodyRatio = 0.35; // was 0.5
     int adxPeriod = 14;
-    double minADX = 25.0;
+    double minADX = 20.0; // was 25.0
     int consecutiveTradeLimit = 1;
     static int lastBuyBar = -1000, lastSellBar = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
@@ -1104,13 +1104,13 @@ bool BollingerBandBreakoutStrategySignal()
     double bbDeviation = 2.0;
     int rsiPeriod = 14;
     double rsiBuy = 55.0, rsiSell = 45.0;
-    double minVolatility = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // ATR filter
-    double minBandWidth = 30 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Minimum band width
+    double minVolatility = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minBandWidth = 24 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 30
     double maxSpread = MaxSpread; // Use input
     int shift = 1; // Use last closed bar
     double bandBufferRatio = 0.10; // 10% of band width
-    double minBodyRatio = 0.5; // Candle body at least 50% of band width
-    int minVolume = 100; // Minimum tick volume (dynamic)
+    double minBodyRatio = 0.35; // was 0.5
+    int minVolume = 80; // Minimum tick volume (dynamic)
     int minRetestBars = 2, maxRetestBars = 5; // Retest window
     int consecutiveTradeLimit = 1; // Only 1 trade per direction per N bars
     static int lastBuyBar = -1000, lastSellBar = -1000;
@@ -1241,12 +1241,12 @@ bool StochasticReversalStrategySignal()
 {
     int kPeriod = 14, dPeriod = 3, slowing = 3;
     double overbought = 80.0, oversold = 20.0;
-    double minVolatility = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minBodyRatio = 0.5;
+    double minVolatility = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minEMADist = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minBodyRatio = 0.35; // was 0.5
     int adxPeriod = 14;
-    double minADX = 25.0;
+    double minADX = 20.0; // was 25.0
     int consecutiveTradeLimit = 1;
     static int lastBuyBar = -1000, lastSellBar = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
@@ -1360,11 +1360,11 @@ bool StochasticReversalStrategySignal()
 // --- VWAP Bounce Strategy with Advanced Filters ---
 bool VWAPBounceStrategySignal()
 {
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minEMADist = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double minBodyRatio = 0.5;
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minEMADist = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    double minBodyRatio = 0.35; // was 0.5
     int adxPeriod = 14;
-    double minADX = 25.0;
+    double minADX = 20.0; // was 25.0
     int consecutiveTradeLimit = 1;
     static int lastBuyBar = -1000, lastSellBar = -1000;
     int currentBar = Bars(_Symbol, PERIOD_CURRENT);
@@ -1499,8 +1499,8 @@ bool MeanReversionVWAPMAStrategySignal()
     if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    double lowVolThreshold = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Low volatility threshold
-    if(atr > lowVolThreshold) return false; // Only trade in low volatility
+    double lowVolThreshold = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    if(atr > lowVolThreshold) return false;
 
     // --- VWAP calculation (manual, since no native iVWAP) ---
     double vwap = 0.0, totalPV = 0.0, totalVol = 0.0;
@@ -1602,8 +1602,8 @@ bool RangeChannelTradingStrategySignal()
     if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    double lowVolThreshold = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Low volatility threshold
-    if(atr > lowVolThreshold) return false; // Only trade in low volatility
+    double lowVolThreshold = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    if(atr > lowVolThreshold) return false;
 
     // --- Identify range ---
     double rangeHigh = iHigh(_Symbol, PERIOD_CURRENT, shift);
@@ -1701,8 +1701,8 @@ bool HeikinAshiTrendFollowingStrategySignal()
     if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    if(atr < minATR) return false; // Only trade in sufficient volatility
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
+    if(atr < minATR) return false;
 
     // --- Higher timeframe trend filter (H1 EMA20/EMA50) ---
     int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
@@ -1789,7 +1789,7 @@ bool ParabolicSARReversalStrategySignal()
     if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
     if(atr < minATR) return false;
 
     // --- Parabolic SAR ---
@@ -1885,7 +1885,7 @@ bool CCIDivergenceStrategySignal()
     if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
     if(atr < minATR) return false;
 
     // --- CCI ---
@@ -1982,7 +1982,7 @@ bool OrderBlockBounceStrategySignal()
     if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // was 10
     if(atr < minATR) return false;
 
     // --- Find recent order block (consolidation before a strong move) ---
