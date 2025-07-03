@@ -733,5 +733,366 @@ void CheckEntryConditions()
     if(currentBarTime == lastTradeBarTime) return;
     lastTradeBarTime = currentBarTime;*/
 
+    if(SupportResistanceBounceSignal()) return;
+    if(MovingAverageCrossoverSignal()) return;
+    if(RangeBreakoutSignal()) return;
+}
+
+// Strategy 1: Support/Resistance Bounce Strategy
+bool SupportResistanceBounceSignal()
+{
+    int shift = 1;
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minBodyRatio = 0.3;
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar_SRBounce = -1000, lastSellBar_SRBounce = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- ATR filter ---
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    if(atr < minATR) return false;
+
+    // --- RSI filter ---
+    int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
+    double rsiBuffer[1];
+    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
+    double rsi = rsiBuffer[0];
+    IndicatorRelease(rsiHandle);
+
+    // --- Get H1 and H4 S/R levels (using pivot points) ---
+    double h1High[50], h1Low[50], h4High[50], h4Low[50];
+    if(CopyHigh(_Symbol, PERIOD_H1, 1, 50, h1High) <= 0) return false;
+    if(CopyLow(_Symbol, PERIOD_H1, 1, 50, h1Low) <= 0) return false;
+    if(CopyHigh(_Symbol, PERIOD_H4, 1, 50, h4High) <= 0) return false;
+    if(CopyLow(_Symbol, PERIOD_H4, 1, 50, h4Low) <= 0) return false;
+
+    // Find significant S/R levels
+    double supportLevel = 0, resistanceLevel = 0;
+    double minTouchDistance = 5 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     
+    // Find support (look for lowest lows that have been tested multiple times)
+    for(int i = 10; i < 40; i++) {
+        int touches = 0;
+        for(int j = 0; j < 50; j++) {
+            if(MathAbs(h1Low[j] - h1Low[i]) < minTouchDistance) touches++;
+            if(MathAbs(h4Low[j] - h1Low[i]) < minTouchDistance) touches++;
+        }
+        if(touches >= 3 && (supportLevel == 0 || h1Low[i] < supportLevel)) {
+            supportLevel = h1Low[i];
+        }
+    }
+    
+    // Find resistance (look for highest highs that have been tested multiple times)
+    for(int i = 10; i < 40; i++) {
+        int touches = 0;
+        for(int j = 0; j < 50; j++) {
+            if(MathAbs(h1High[j] - h1High[i]) < minTouchDistance) touches++;
+            if(MathAbs(h4High[j] - h1High[i]) < minTouchDistance) touches++;
+        }
+        if(touches >= 3 && (resistanceLevel == 0 || h1High[i] > resistanceLevel)) {
+            resistanceLevel = h1High[i];
+        }
+    }
+
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double body = MathAbs(close - open);
+    
+    // --- Candle quality check ---
+    if(body < minBodyRatio * atr) return false;
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.3 * candleRange);
+    bool strongBear = (close <= low + 0.3 * candleRange);
+
+    double bounceDistance = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    
+    // Buy signal: Bounce off support
+    if(supportLevel > 0 && low <= supportLevel + bounceDistance && close > supportLevel && 
+       rsi > 35 && rsi < 60 && strongBull && (currentBar - lastBuyBar_SRBounce > consecutiveTradeLimit)) {
+        double sl = supportLevel - 6 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        double entry = ask;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = entry + 12 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 12 pips target
+        
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
+        
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "SR Bounce Buy")) {
+            lastBuyBar_SRBounce = currentBar;
+            return true;
+        }
+    }
+    
+    // Sell signal: Bounce off resistance
+    if(resistanceLevel > 0 && high >= resistanceLevel - bounceDistance && close < resistanceLevel && 
+       rsi > 40 && rsi < 65 && strongBear && (currentBar - lastSellBar_SRBounce > consecutiveTradeLimit)) {
+        double sl = resistanceLevel + 6 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        double entry = bid;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = entry - 12 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 12 pips target
+        
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
+        
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "SR Bounce Sell")) {
+            lastSellBar_SRBounce = currentBar;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Strategy 2: Moving Average Crossover Strategy
+bool MovingAverageCrossoverSignal()
+{
+    int shift = 1;
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minBodyRatio = 0.3;
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar_MACross = -1000, lastSellBar_MACross = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- ATR filter ---
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    if(atr < minATR) return false;
+
+    // --- EMA 8 and 21 ---
+    int emaFastHandle = iMA(_Symbol, PERIOD_CURRENT, 8, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowHandle = iMA(_Symbol, PERIOD_CURRENT, 21, 0, MODE_EMA, PRICE_CLOSE);
+    double emaFast[3], emaSlow[3];
+    if(CopyBuffer(emaFastHandle, 0, shift, 3, emaFast) <= 0) { IndicatorRelease(emaFastHandle); return false; }
+    if(CopyBuffer(emaSlowHandle, 0, shift, 3, emaSlow) <= 0) { IndicatorRelease(emaSlowHandle); return false; }
+    IndicatorRelease(emaFastHandle);
+    IndicatorRelease(emaSlowHandle);
+
+    // --- RSI momentum confirmation ---
+    int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
+    double rsiBuffer[1];
+    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
+    double rsi = rsiBuffer[0];
+    IndicatorRelease(rsiHandle);
+
+    // --- MACD for momentum ---
+    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
+    double macdMain[1], macdSignal[1];
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    double macd = macdMain[0], macdSig = macdSignal[0];
+    IndicatorRelease(macdHandle);
+
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double body = MathAbs(close - open);
+    
+    // --- Candle quality check ---
+    if(body < minBodyRatio * atr) return false;
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.3 * candleRange);
+    bool strongBear = (close <= low + 0.3 * candleRange);
+
+    // Check for crossover and momentum
+    bool bullishCrossover = (emaFast[0] > emaSlow[0] && emaFast[1] <= emaSlow[1]);
+    bool bearishCrossover = (emaFast[0] < emaSlow[0] && emaFast[1] >= emaSlow[1]);
+    
+    // Price confirmation (close above/below both MAs)
+    bool priceAboveMAs = (close > emaFast[0] && close > emaSlow[0]);
+    bool priceBelowMAs = (close < emaFast[0] && close < emaSlow[0]);
+
+    // Find previous swing high/low for SL
+    double swingHigh = high, swingLow = low;
+    for(int i = 2; i <= 10; i++) {
+        double h = iHigh(_Symbol, PERIOD_CURRENT, i);
+        double l = iLow(_Symbol, PERIOD_CURRENT, i);
+        if(h > swingHigh) swingHigh = h;
+        if(l < swingLow) swingLow = l;
+    }
+
+    // Buy signal: Bullish crossover with momentum
+    if(bullishCrossover && priceAboveMAs && rsi > 50 && macd > macdSig && strongBull && 
+       (currentBar - lastBuyBar_MACross > consecutiveTradeLimit)) {
+        double sl = swingLow - 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        double entry = ask;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        // Ensure SL is within 7 pips max
+        if((entry - sl) > 7 * SymbolInfoDouble(_Symbol, SYMBOL_POINT)) {
+            sl = entry - 7 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        }
+        double tp = entry + 15 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 15 pips target
+        
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
+        
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "MA Cross Buy")) {
+            lastBuyBar_MACross = currentBar;
+            return true;
+        }
+    }
+    
+    // Sell signal: Bearish crossover with momentum
+    if(bearishCrossover && priceBelowMAs && rsi < 50 && macd < macdSig && strongBear && 
+       (currentBar - lastSellBar_MACross > consecutiveTradeLimit)) {
+        double sl = swingHigh + 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        double entry = bid;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        // Ensure SL is within 7 pips max
+        if((sl - entry) > 7 * SymbolInfoDouble(_Symbol, SYMBOL_POINT)) {
+            sl = entry + 7 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        }
+        double tp = entry - 15 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 15 pips target
+        
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
+        
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "MA Cross Sell")) {
+            lastSellBar_MACross = currentBar;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Strategy 3: Range Breakout Strategy (Asian Session Focus)
+bool RangeBreakoutSignal()
+{
+    int rangeBars = 20; // Extended for Asian session range
+    int shift = 1;
+    double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double minBodyRatio = 0.3;
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar_RangeBreak = -1000, lastSellBar_RangeBreak = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- Time filter for Asian session range (23:00-06:00 GMT) ---
+    MqlDateTime timeStruct;
+    TimeToStruct(TimeCurrent(), timeStruct);
+    int currentHour = timeStruct.hour;
+    bool asianSessionRange = (currentHour >= 23 || currentHour <= 6);
+    
+    // --- ATR filter ---
+    int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    if(atr < minATR) return false;
+
+    // --- Volume confirmation (using tick volume) ---
+    double volumes[3];
+    if(CopyTickVolume(_Symbol, PERIOD_CURRENT, shift, 3, volumes) <= 0) return false;
+    double avgVolume = (volumes[0] + volumes[1] + volumes[2]) / 3;
+    bool volumeSpike = volumes[0] > avgVolume * 1.5;
+
+    // --- ADX for trend strength ---
+    int adxHandle = iADX(_Symbol, PERIOD_CURRENT, 14);
+    double adxBuffer[1];
+    if(CopyBuffer(adxHandle, 0, shift, 1, adxBuffer) <= 0) { IndicatorRelease(adxHandle); return false; }
+    double adx = adxBuffer[0];
+    IndicatorRelease(adxHandle);
+
+    // --- Range calculation ---
+    double rangeHigh = iHigh(_Symbol, PERIOD_CURRENT, 1);
+    double rangeLow = iLow(_Symbol, PERIOD_CURRENT, 1);
+    for(int i = 2; i <= rangeBars; i++) {
+        double h = iHigh(_Symbol, PERIOD_CURRENT, i);
+        double l = iLow(_Symbol, PERIOD_CURRENT, i);
+        if(h > rangeHigh) rangeHigh = h;
+        if(l < rangeLow) rangeLow = l;
+    }
+    double rangeHeight = rangeHigh - rangeLow;
+    double minRangeHeight = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if(rangeHeight < minRangeHeight) return false;
+
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double body = MathAbs(close - open);
+    
+    // --- Candle quality check ---
+    if(body < minBodyRatio * atr) return false;
+    double candleRange = high - low;
+    bool strongBull = (close >= high - 0.3 * candleRange);
+    bool strongBear = (close <= low + 0.3 * candleRange);
+
+    double breakoutBuffer = 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
+    // Buy signal: Breakout above range
+    if(ask > rangeHigh + breakoutBuffer && volumeSpike && adx > 15 && strongBull && 
+       (currentBar - lastBuyBar_RangeBreak > consecutiveTradeLimit)) {
+        double sl = rangeHigh - 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Stop back inside range
+        double entry = ask;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = entry + rangeHeight; // Target = range height projected
+        
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
+        
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Range Break Buy")) {
+            lastBuyBar_RangeBreak = currentBar;
+            return true;
+        }
+    }
+    
+    // Sell signal: Breakout below range
+    if(bid < rangeLow - breakoutBuffer && volumeSpike && adx > 15 && strongBear && 
+       (currentBar - lastSellBar_RangeBreak > consecutiveTradeLimit)) {
+        double sl = rangeLow + 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Stop back inside range
+        double entry = bid;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = entry - rangeHeight; // Target = range height projected
+        
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
+        
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Range Break Sell")) {
+            lastSellBar_RangeBreak = currentBar;
+            return true;
+        }
+    }
+    
+    return false;
 }
