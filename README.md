@@ -1,0 +1,2 @@
+# GoldScrap
+Gold Scraping EA
