@@ -16,6 +16,7 @@ input ENUM_ACCOUNT_TYPE AccountType = mt5_raw_real_vc; // Account Type for Exnes
 input double   LotSize = 0.02;                  // Fixed lot size
 input int      MagicNumber = 85462796;            // Magic number
 input int      MaxOpenTrades = 6;               // Maximum open trades
+input double MaxSLAmount = 1.5; // Maximum stop loss per trade in account currency
 
 input group "=== RISK MANAGEMENT ==="
 input double   MaxSpread = 40.0;                // Maximum spread in points
@@ -828,6 +829,9 @@ bool BreakoutStrategySignal()
     // Buy breakout
     if(ask > rangeHigh && rsi > 55 && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double sl = rangeLow - 1.2 * atr;
+        double entry = ask;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Breakout Buy")) {
             lastBuyBar = currentBar;
@@ -837,6 +841,9 @@ bool BreakoutStrategySignal()
     // Sell breakout
     if(bid < rangeLow && rsi < 45 && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double sl = rangeHigh + 1.2 * atr;
+        double entry = bid;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Breakout Sell")) {
             lastSellBar = currentBar;
@@ -924,9 +931,11 @@ bool PullbackScalpingStrategySignal()
 
     // --- Uptrend: EMA20 > EMA50, H1 uptrend, ADX, MACD, candle quality ---
     if(prevEmaFast > prevEmaSlow && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
-        // Pullback: price at or below EMA20
         if(close <= prevEmaFast + 2*point) {
-            double sl = low - 1.2 * atr; // ATR-based tighter SL
+            double sl = low - 1.2 * atr;
+            double entry = close;
+            double maxSLDist = GetMaxSLDistance(LotSize);
+            if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
             OpenTrade(ORDER_TYPE_BUY, sl, close + (close - sl) * 1.5, "Pullback PinBar Buy");
             lastBuyBar = currentBar;
             return true;
@@ -934,9 +943,11 @@ bool PullbackScalpingStrategySignal()
     }
     // --- Downtrend: EMA20 < EMA50, H1 downtrend, ADX, MACD, candle quality ---
     if(prevEmaFast < prevEmaSlow && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
-        // Pullback: price at or above EMA20
         if(close >= prevEmaFast - 2*point) {
-            double sl = high + 1.2 * atr; // ATR-based tighter SL
+            double sl = high + 1.2 * atr;
+            double entry = close;
+            double maxSLDist = GetMaxSLDistance(LotSize);
+            if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
             OpenTrade(ORDER_TYPE_SELL, sl, close - (sl - close) * 1.5, "Pullback PinBar Sell");
             lastSellBar = currentBar;
             return true;
@@ -1023,6 +1034,9 @@ bool TrendMACrossStrategySignal()
     // --- Buy signal ---
     if(crossUp && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double sl = low - 1.2 * atr;
+        double entry = close;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "MA Cross Buy")) {
             lastBuyBar = currentBar;
@@ -1032,6 +1046,9 @@ bool TrendMACrossStrategySignal()
     // --- Sell signal ---
     if(crossDown && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double sl = high + 1.2 * atr;
+        double entry = close;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "MA Cross Sell")) {
             lastSellBar = currentBar;
@@ -1147,6 +1164,9 @@ bool BollingerBandBreakoutStrategySignal()
 
     // --- Buy breakout: close above upper band + buffer, strong candle, RSI, MACD, uptrend, retest, limit trades ---
     double slBuy = upper[1] - buffer; // Tighter SL just inside band
+    double entryBuy = close;
+    double maxSLDist = GetMaxSLDistance(LotSize);
+    if((entryBuy - slBuy) > maxSLDist) slBuy = entryBuy - maxSLDist;
     if(close > upper[1] + buffer && rsi > rsiBuy && uptrend && retestBuy && strongBull && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double tp = close + (close - slBuy) * 1.5;
         if(OpenTrade(ORDER_TYPE_BUY, slBuy, tp, "BB Breakout Buy")) {
@@ -1156,6 +1176,8 @@ bool BollingerBandBreakoutStrategySignal()
     }
     // --- Sell breakout: close below lower band - buffer, strong candle, RSI, MACD, downtrend, retest, limit trades ---
     double slSell = lower[1] + buffer; // Tighter SL just inside band
+    double entrySell = close;
+    if((slSell - entrySell) > maxSLDist) slSell = entrySell + maxSLDist;
     if(close < lower[1] - buffer && rsi < rsiSell && downtrend && retestSell && strongBear && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double tp = close - (slSell - close) * 1.5;
         if(OpenTrade(ORDER_TYPE_SELL, slSell, tp, "BB Breakout Sell")) {
@@ -1253,6 +1275,9 @@ bool StochasticReversalStrategySignal()
     // --- Buy reversal: K crosses above D in oversold, uptrend, limit trades ---
     if(prevK < prevD && currK > currD && prevK < oversold && currK > oversold && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double sl = low - 1.2 * atr;
+        double entry = close;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Stoch Reversal Buy")) {
             lastBuyBar = currentBar;
@@ -1262,6 +1287,9 @@ bool StochasticReversalStrategySignal()
     // --- Sell reversal: K crosses below D in overbought, downtrend, limit trades ---
     if(prevK > prevD && currK < currD && prevK > overbought && currK < overbought && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double sl = high + 1.2 * atr;
+        double entry = close;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Stoch Reversal Sell")) {
             lastSellBar = currentBar;
@@ -1358,6 +1386,9 @@ bool VWAPBounceStrategySignal()
     // --- Buy bounce: price dips below VWAP and closes above, uptrend, limit trades ---
     if(low < vwap && close > vwap && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double sl = low - 1.2 * atr;
+        double entry = close;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "VWAP Bounce Buy")) {
             lastBuyBar = currentBar;
@@ -1367,6 +1398,9 @@ bool VWAPBounceStrategySignal()
     // --- Sell bounce: price spikes above VWAP and closes below, downtrend, limit trades ---
     if(high > vwap && close < vwap && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double sl = high + 1.2 * atr;
+        double entry = close;
+        double maxSLDist = GetMaxSLDistance(LotSize);
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "VWAP Bounce Sell")) {
             lastSellBar = currentBar;
@@ -1374,4 +1408,15 @@ bool VWAPBounceStrategySignal()
         }
     }
     return false;
+} 
+
+// Helper: Calculate max SL price distance for given lot size
+// Returns price distance (in price units, not points)
+double GetMaxSLDistance(double lot) {
+    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if(tickValue == 0 || tickSize == 0) return 0;
+    double points = (MaxSLAmount / (tickValue * lot)) * tickSize / point;
+    return points * point;
 } 
