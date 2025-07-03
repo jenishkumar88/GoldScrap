@@ -13,18 +13,18 @@ enum ENUM_ACCOUNT_TYPE
 
 input group "=== GENERAL SETTINGS ==="
 input ENUM_ACCOUNT_TYPE AccountType = mt5_raw_real_vc; // Account Type for Exness API
-input double   LotSize = 0.01;                  // Fixed lot size
-input int      MagicNumber = 854796;            // Magic number
+input double   LotSize = 0.02;                  // Fixed lot size
+input int      MagicNumber = 85462796;            // Magic number
 input int      MaxOpenTrades = 6;               // Maximum open trades
 
 input group "=== RISK MANAGEMENT ==="
 input double   MaxSpread = 40.0;                // Maximum spread in points
-input int OrderDelaySeconds = 15; // Minimum seconds to wait before placing next order
+input int OrderDelaySeconds = 60; // Minimum seconds to wait before placing next order
 
 
 input group "=== AUTO CLOSE SETTINGS ==="
 input bool     EnableAutoClose = true;          // Enable automatic order closing
-input int      AutoCloseMinutes = 15;           // Minutes after which to auto-close orders (0 = disabled)
+input int      AutoCloseMinutes = 40;           // Minutes after which to auto-close orders (0 = disabled)
 
 input group "=== DAILY LIMITS ==="
 input bool     StopOnDailyLimit = true;         // Stop EA when daily limit reached   
