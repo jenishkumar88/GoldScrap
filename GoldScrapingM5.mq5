@@ -741,6 +741,10 @@ void CheckEntryConditions()
     if(VWAPBounceStrategySignal()) return;
     if(MeanReversionVWAPMAStrategySignal()) return;
     if(RangeChannelTradingStrategySignal()) return;
+    if(HeikinAshiTrendFollowingStrategySignal()) return;
+    if(ParabolicSARReversalStrategySignal()) return;
+    if(CCIDivergenceStrategySignal()) return;
+    if(OrderBlockBounceStrategySignal()) return;
 }
 
 
@@ -1680,6 +1684,390 @@ bool RangeChannelTradingStrategySignal()
         double commission = CalculateCommissionOrSpread(lot);
         if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Range Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- Heikin Ashi Trend Following Strategy ---
+bool HeikinAshiTrendFollowingStrategySignal()
+{
+    int shift = 1;
+    double atrPeriod = 14;
+    double atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if(atr < minATR) return false; // Only trade in sufficient volatility
+
+    // --- Higher timeframe trend filter (H1 EMA20/EMA50) ---
+    int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double fastH1[1], slowH1[1];
+    bool uptrend = false, downtrend = false;
+    if(CopyBuffer(emaFastH1, 0, 0, 1, fastH1) > 0 && CopyBuffer(emaSlowH1, 0, 0, 1, slowH1) > 0) {
+        uptrend = fastH1[0] > slowH1[0];
+        downtrend = fastH1[0] < slowH1[0];
+    }
+    IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
+
+    double lot = LotSize;
+    double maxSLDist = GetMaxSLDistance(lot);
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- Heikin Ashi calculation (manual) ---
+    double haClose[3], haOpen[3], haHigh[3], haLow[3];
+    for(int i=0; i<3; i++) {
+        double c = iClose(_Symbol, PERIOD_CURRENT, shift+i);
+        double o = iOpen(_Symbol, PERIOD_CURRENT, shift+i);
+        double h = iHigh(_Symbol, PERIOD_CURRENT, shift+i);
+        double l = iLow(_Symbol, PERIOD_CURRENT, shift+i);
+        if(i==0) {
+            haClose[i] = (o + h + l + c) / 4.0;
+            haOpen[i] = (o + c) / 2.0;
+        } else {
+            haClose[i] = (o + h + l + c) / 4.0;
+            haOpen[i] = (haOpen[i-1] + haClose[i-1]) / 2.0;
+        }
+        haHigh[i] = MathMax(h, MathMax(haOpen[i], haClose[i]));
+        haLow[i] = MathMin(l, MathMin(haOpen[i], haClose[i]));
+    }
+    // --- Heikin Ashi color and size ---
+    bool haBull = haClose[0] > haOpen[0];
+    bool haBear = haClose[0] < haOpen[0];
+    double haBody = MathAbs(haClose[0] - haOpen[0]);
+    double minBody = 0.5 * atr;
+    // --- Entry on color change or pullback ---
+    // Buy: H1 uptrend, HA color change to bull, body size, previous HA was bear
+    if(uptrend && haBull && haBody > minBody && haClose[1] < haOpen[1] && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double entry = haClose[0];
+        double sl = haLow[0] - 1.2 * atr;
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = entry + 2 * (entry - sl);
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "HA Trend Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
+    }
+    // Sell: H1 downtrend, HA color change to bear, body size, previous HA was bull
+    if(downtrend && haBear && haBody > minBody && haClose[1] > haOpen[1] && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double entry = haClose[0];
+        double sl = haHigh[0] + 1.2 * atr;
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = entry - 2 * (sl - entry);
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "HA Trend Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- Parabolic SAR Reversal Strategy ---
+bool ParabolicSARReversalStrategySignal()
+{
+    int shift = 1;
+    double atrPeriod = 14;
+    double atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if(atr < minATR) return false;
+
+    // --- Parabolic SAR ---
+    double sarStep = 0.02, sarMax = 0.2;
+    int sarHandle = iSAR(_Symbol, PERIOD_CURRENT, sarStep, sarMax);
+    double sarBuffer[2];
+    if(CopyBuffer(sarHandle, 0, shift, 2, sarBuffer) <= 0) { IndicatorRelease(sarHandle); return false; }
+    IndicatorRelease(sarHandle);
+    double prevSAR = sarBuffer[1];
+    double currSAR = sarBuffer[0];
+    double prevClose = iClose(_Symbol, PERIOD_CURRENT, shift+1);
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double lot = LotSize;
+    double maxSLDist = GetMaxSLDistance(lot);
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+
+    // --- H1 Trend filter (EMA20/EMA50) ---
+    int emaFastH1 = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int emaSlowH1 = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double fastH1[1], slowH1[1];
+    bool uptrend = false, downtrend = false;
+    if(CopyBuffer(emaFastH1, 0, 0, 1, fastH1) > 0 && CopyBuffer(emaSlowH1, 0, 0, 1, slowH1) > 0) {
+        uptrend = fastH1[0] > slowH1[0];
+        downtrend = fastH1[0] < slowH1[0];
+    }
+    IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
+
+    // --- MACD confirmation ---
+    int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
+    double macdMain[1], macdSignal[1];
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    double macd = macdMain[0], macdSig = macdSignal[0];
+    IndicatorRelease(macdHandle);
+
+    // --- RSI confirmation ---
+    int rsiPeriod = 14;
+    int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, rsiPeriod, PRICE_CLOSE);
+    double rsiBuffer[1];
+    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
+    double rsi = rsiBuffer[0];
+    IndicatorRelease(rsiHandle);
+
+    // --- Buy: SAR flips below price, uptrend, MACD > signal, RSI > 55, previous SAR above price ---
+    if(prevSAR > prevClose && currSAR < close && uptrend && macd > macdSig && rsi > 55 && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = low - 1.2 * atr;
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = entry + 2 * (entry - sl);
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "SAR Reversal Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
+    }
+    // --- Sell: SAR flips above price, downtrend, MACD < signal, RSI < 45, previous SAR below price ---
+    if(prevSAR < prevClose && currSAR > close && downtrend && macd < macdSig && rsi < 45 && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = high + 1.2 * atr;
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = entry - 2 * (sl - entry);
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "SAR Reversal Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- CCI Divergence Strategy ---
+bool CCIDivergenceStrategySignal()
+{
+    int shift = 1;
+    int cciPeriod = 20;
+    int lookback = 10;
+    double atrPeriod = 14;
+    double atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if(atr < minATR) return false;
+
+    // --- CCI ---
+    int cciHandle = iCCI(_Symbol, PERIOD_CURRENT, cciPeriod, PRICE_TYPICAL);
+    double cciBuffer[lookback+2];
+    if(CopyBuffer(cciHandle, 0, shift, lookback+2, cciBuffer) <= 0) { IndicatorRelease(cciHandle); return false; }
+    IndicatorRelease(cciHandle);
+
+    // --- Find price/CCI highs and lows ---
+    double priceHigh = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double priceLow = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double cciHigh = cciBuffer[0];
+    double cciLow = cciBuffer[0];
+    int priceHighIdx = shift, priceLowIdx = shift, cciHighIdx = 0, cciLowIdx = 0;
+    for(int i=1; i<=lookback; i++) {
+        double h = iHigh(_Symbol, PERIOD_CURRENT, shift+i);
+        double l = iLow(_Symbol, PERIOD_CURRENT, shift+i);
+        if(h > priceHigh) { priceHigh = h; priceHighIdx = shift+i; }
+        if(l < priceLow) { priceLow = l; priceLowIdx = shift+i; }
+        if(cciBuffer[i] > cciHigh) { cciHigh = cciBuffer[i]; cciHighIdx = i; }
+        if(cciBuffer[i] < cciLow) { cciLow = cciBuffer[i]; cciLowIdx = i; }
+    }
+
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double lot = LotSize;
+    double maxSLDist = GetMaxSLDistance(lot);
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+    long tickVolume = iVolume(_Symbol, PERIOD_CURRENT, shift);
+    long avgVolume = 0;
+    for(int i=shift; i<shift+lookback; i++) avgVolume += iVolume(_Symbol, PERIOD_CURRENT, i);
+    avgVolume /= lookback;
+
+    // --- Bullish divergence: price makes new low, CCI does not ---
+    bool bullishDiv = (priceLowIdx == shift && cciLowIdx != 0 && cciBuffer[0] > cciBuffer[cciLowIdx]);
+    // --- Bearish divergence: price makes new high, CCI does not ---
+    bool bearishDiv = (priceHighIdx == shift && cciHighIdx != 0 && cciBuffer[0] < cciBuffer[cciHighIdx]);
+
+    // --- Price action confirmation: bullish/bearish engulfing ---
+    double prevClose = iClose(_Symbol, PERIOD_CURRENT, shift+1);
+    double prevOpen = iOpen(_Symbol, PERIOD_CURRENT, shift+1);
+    bool bullishEngulf = (close > open && prevClose < prevOpen && close > prevOpen && open < prevClose);
+    bool bearishEngulf = (close < open && prevClose > prevOpen && close < prevOpen && open > prevClose);
+
+    // --- Buy: bullish divergence, bullish engulfing, above average volume ---
+    if(bullishDiv && bullishEngulf && tickVolume > avgVolume && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = low - 1.2 * atr;
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = entry + 2 * (entry - sl);
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "CCI Div Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
+    }
+    // --- Sell: bearish divergence, bearish engulfing, above average volume ---
+    if(bearishDiv && bearishEngulf && tickVolume > avgVolume && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = high + 1.2 * atr;
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = entry - 2 * (sl - entry);
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "CCI Div Sell")) {
+            lastSellBar = currentBar;
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- Order Block/Institutional Level Bounce Strategy ---
+bool OrderBlockBounceStrategySignal()
+{
+    int shift = 1;
+    int blockLookback = 20;
+    int blockSize = 3; // Number of bars for consolidation
+    double atrPeriod = 14;
+    double atrHandle = iATR(_Symbol, PERIOD_CURRENT, atrPeriod);
+    double atrBuffer[2];
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    double atr = atrBuffer[0];
+    IndicatorRelease(atrHandle);
+    double minATR = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if(atr < minATR) return false;
+
+    // --- Find recent order block (consolidation before a strong move) ---
+    double blockHigh = 0, blockLow = 0;
+    int blockStart = -1;
+    for(int i=shift+blockSize; i<shift+blockLookback; i++) {
+        bool isConsolidation = true;
+        double localHigh = iHigh(_Symbol, PERIOD_CURRENT, i);
+        double localLow = iLow(_Symbol, PERIOD_CURRENT, i);
+        for(int j=0; j<blockSize; j++) {
+            double h = iHigh(_Symbol, PERIOD_CURRENT, i-j);
+            double l = iLow(_Symbol, PERIOD_CURRENT, i-j);
+            if(MathAbs(h-l) > 1.5*atr) { isConsolidation = false; break; }
+            if(h > localHigh) localHigh = h;
+            if(l < localLow) localLow = l;
+        }
+        // Check for strong move after block
+        if(isConsolidation) {
+            double moveBarHigh = iHigh(_Symbol, PERIOD_CURRENT, i-blockSize);
+            double moveBarLow = iLow(_Symbol, PERIOD_CURRENT, i-blockSize);
+            if(MathAbs(moveBarHigh-moveBarLow) > 2*atr) {
+                blockHigh = localHigh;
+                blockLow = localLow;
+                blockStart = i;
+                break;
+            }
+        }
+    }
+    if(blockStart == -1) return false;
+
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double lot = LotSize;
+    double maxSLDist = GetMaxSLDistance(lot);
+    int consecutiveTradeLimit = 1;
+    static int lastBuyBar = -1000, lastSellBar = -1000;
+    int currentBar = Bars(_Symbol, PERIOD_CURRENT);
+    long tickVolume = iVolume(_Symbol, PERIOD_CURRENT, shift);
+    long avgVolume = 0;
+    for(int i=shift; i<shift+blockSize; i++) avgVolume += iVolume(_Symbol, PERIOD_CURRENT, i);
+    avgVolume /= blockSize;
+
+    // --- Oscillator confirmation (Stochastic) ---
+    int kPeriod = 14, dPeriod = 3, slowing = 3;
+    int stochHandle = iStochastic(_Symbol, PERIOD_CURRENT, kPeriod, dPeriod, slowing, MODE_SMA, 0);
+    double kBuffer[2], dBuffer[2];
+    if(CopyBuffer(stochHandle, 0, shift, 2, kBuffer) <= 0) { IndicatorRelease(stochHandle); return false; }
+    if(CopyBuffer(stochHandle, 1, shift, 2, dBuffer) <= 0) { IndicatorRelease(stochHandle); return false; }
+    IndicatorRelease(stochHandle);
+    double currK = kBuffer[0], currD = dBuffer[0];
+
+    // --- Wick rejection ---
+    double upperWick = high - MathMax(open, close);
+    double lowerWick = MathMin(open, close) - low;
+    double body = MathAbs(close - open);
+
+    // --- Buy: price returns to blockLow, volume spike, lower wick rejection, Stoch < 20 ---
+    if(close < blockLow + 2*atr && tickVolume > 1.5*avgVolume && lowerWick > 2*body && currK < 20 && currD < 20 && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = blockLow - 1.2 * atr;
+        if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
+        double tp = blockHigh;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "OrderBlock Buy")) {
+            lastBuyBar = currentBar;
+            return true;
+        }
+    }
+    // --- Sell: price returns to blockHigh, volume spike, upper wick rejection, Stoch > 80 ---
+    if(close > blockHigh - 2*atr && tickVolume > 1.5*avgVolume && upperWick > 2*body && currK > 80 && currD > 80 && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+        double entry = close;
+        double sl = blockHigh + 1.2 * atr;
+        if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
+        double tp = blockLow;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * lot;
+        double commission = CalculateCommissionOrSpread(lot);
+        if(expectedProfit < commission) return false;
+        if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "OrderBlock Sell")) {
             lastSellBar = currentBar;
             return true;
         }
