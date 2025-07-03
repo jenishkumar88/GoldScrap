@@ -813,6 +813,8 @@ bool BreakoutStrategySignal()
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
 
     // --- RSI ---
     int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
@@ -821,19 +823,9 @@ bool BreakoutStrategySignal()
     double rsi = rsiBuffer[0];
     IndicatorRelease(rsiHandle);
 
-    // --- Candle quality ---
-    double close = iClose(_Symbol, PERIOD_CURRENT, shift);
-    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
-    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
-    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
-    double body = MathAbs(close - open);
-    if(body < minBodyRatio * atr) return false;
-    double candleRange = high - low;
-    bool strongBull = (close >= high - 0.2 * candleRange);
-    bool strongBear = (close <= low + 0.2 * candleRange);
 
     // Buy breakout
-    if(ask > rangeHigh && rsi > 55 && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar_Breakout > consecutiveTradeLimit)) {
+    if(ask > rangeHigh && rsi > 55 && uptrend && adx > minADX && macd > macdSig && (currentBar - lastBuyBar_Breakout > consecutiveTradeLimit)) {
         double sl = rangeLow - 1.2 * atr;
         double entry = ask;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -850,7 +842,7 @@ bool BreakoutStrategySignal()
         }
     }
     // Sell breakout
-    if(bid < rangeLow && rsi < 45 && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar_Breakout > consecutiveTradeLimit)) {
+    if(bid < rangeLow && rsi < 45 && downtrend && adx > minADX && macd < macdSig && (currentBar - lastSellBar_Breakout > consecutiveTradeLimit)) {
         double sl = rangeHigh + 1.2 * atr;
         double entry = bid;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -934,19 +926,14 @@ bool PullbackScalpingStrategySignal()
     }
     IndicatorRelease(emaFastH1); IndicatorRelease(emaSlowH1);
 
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     double close = iClose(_Symbol, PERIOD_CURRENT, shift);
-    double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
-    double body = MathAbs(close - open);
-    if(body < minBodyRatio * atr) return false;
-    double candleRange = high - low;
-    bool strongBull = (close >= high - 0.2 * candleRange);
-    bool strongBear = (close <= low + 0.2 * candleRange);
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
 
-    // --- Uptrend: EMA20 > EMA50, H1 uptrend, ADX, MACD, candle quality ---
-    if(prevEmaFast > prevEmaSlow && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+
+    // --- Uptrend: EMA20 > EMA50, H1 uptrend, ADX, MACD ---
+    if(prevEmaFast > prevEmaSlow && uptrend && adx > minADX && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         if(close <= prevEmaFast + 2*point) {
             double sl = low - 1.2 * atr;
             double entry = close;
@@ -963,8 +950,8 @@ bool PullbackScalpingStrategySignal()
             return true;
         }
     }
-    // --- Downtrend: EMA20 < EMA50, H1 downtrend, ADX, MACD, candle quality ---
-    if(prevEmaFast < prevEmaSlow && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+    // --- Downtrend: EMA20 < EMA50, H1 downtrend, ADX, MACD ---
+    if(prevEmaFast < prevEmaSlow && downtrend && adx > minADX && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         if(close >= prevEmaFast - 2*point) {
             double sl = high + 1.2 * atr;
             double entry = close;
@@ -1049,18 +1036,15 @@ bool TrendMACrossStrategySignal()
     double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
-    double body = MathAbs(close - open);
-    if(body < minBodyRatio * atr) return false;
-    double candleRange = high - low;
-    bool strongBull = (close >= high - 0.2 * candleRange);
-    bool strongBear = (close <= low + 0.2 * candleRange);
+
+   
 
     // --- Cross detection ---
     bool crossUp = (prevFast <= prevSlow && currFast > currSlow);
     bool crossDown = (prevFast >= prevSlow && currFast < currSlow);
 
     // --- Buy signal ---
-    if(crossUp && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+    if(crossUp && uptrend && adx > minADX && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double sl = low - 1.2 * atr;
         double entry = close;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -1077,7 +1061,7 @@ bool TrendMACrossStrategySignal()
         }
     }
     // --- Sell signal ---
-    if(crossDown && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+    if(crossDown && downtrend && adx > minADX && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double sl = high + 1.2 * atr;
         double entry = close;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -1148,16 +1132,15 @@ bool BollingerBandBreakoutStrategySignal()
     if(bandWidth < minBandWidth) return false;
 
     // --- Minimum candle body size ---
-    if(body < minBodyRatio * bandWidth) return false;
+    // Removed: if(body < minBodyRatio * bandWidth) return false;
 
     // --- Volume filter ---
     long tickVolume = iVolume(_Symbol, PERIOD_CURRENT, shift);
     if(tickVolume < minVolume) return false;
 
     // --- Breakout candle quality: close in top/bottom 20% of range ---
-    double candleRange = high - low;
-    bool strongBull = (close >= high - 0.2 * candleRange);
-    bool strongBear = (close <= low + 0.2 * candleRange);
+    // Removed: bool strongBull = (close >= high - 0.2 * candleRange);
+    // Removed: bool strongBear = (close <= low + 0.2 * candleRange);
 
     // --- RSI ---
     int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, rsiPeriod, PRICE_CLOSE);
@@ -1200,13 +1183,13 @@ bool BollingerBandBreakoutStrategySignal()
         if(prevClose >= lower[1] - buffer) { retestSell = true; break; }
     }
 
-    // --- Buy breakout: close above upper band + buffer, strong candle, RSI, MACD, uptrend, retest, limit trades ---
+    // --- Buy breakout: close above upper band + buffer, RSI, MACD, uptrend, retest, limit trades ---
     double slBuy = upper[1] - buffer; // Tighter SL just inside band
     double entryBuy = close;
     double maxSLDist = GetMaxSLDistance(LotSize);
     if((entryBuy - slBuy) > maxSLDist) slBuy = entryBuy - maxSLDist;
     double commission = CalculateCommissionOrSpread(LotSize);
-    if(close > upper[1] + buffer && rsi > rsiBuy && uptrend && retestBuy && strongBull && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+    if(close > upper[1] + buffer && rsi > rsiBuy && uptrend && retestBuy && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double tp = close + (close - slBuy) * 1.5;
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -1217,11 +1200,11 @@ bool BollingerBandBreakoutStrategySignal()
             return true;
         }
     }
-    // --- Sell breakout: close below lower band - buffer, strong candle, RSI, MACD, downtrend, retest, limit trades ---
+    // --- Sell breakout: close below lower band - buffer, RSI, MACD, downtrend, retest, limit trades ---
     double slSell = lower[1] + buffer; // Tighter SL just inside band
     double entrySell = close;
     if((slSell - entrySell) > maxSLDist) slSell = entrySell + maxSLDist;
-    if(close < lower[1] - buffer && rsi < rsiSell && downtrend && retestSell && strongBear && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+    if(close < lower[1] - buffer && rsi < rsiSell && downtrend && retestSell && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double tp = close - (slSell - close) * 1.5;
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -1314,14 +1297,13 @@ bool StochasticReversalStrategySignal()
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
     double body = MathAbs(close - open);
-    if(body < minBodyRatio * atr) return false;
     double candleRange = high - low;
-    bool strongBull = (close >= high - 0.2 * candleRange);
-    bool strongBear = (close <= low + 0.2 * candleRange);
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    // Removed: if(body < minBodyRatio * atr) return false;
+    // Removed: bool strongBull = (close >= high - 0.2 * candleRange);
+    // Removed: bool strongBear = (close <= low + 0.2 * candleRange);
 
     // --- Buy reversal: K crosses above D in oversold, uptrend, limit trades ---
-    if(prevK < prevD && currK > currD && prevK < oversold && currK > oversold && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+    if(prevK < prevD && currK > currD && prevK < oversold && currK > oversold && uptrend && adx > minADX && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double sl = low - 1.2 * atr;
         double entry = close;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -1338,7 +1320,7 @@ bool StochasticReversalStrategySignal()
         }
     }
     // --- Sell reversal: K crosses below D in overbought, downtrend, limit trades ---
-    if(prevK > prevD && currK < currD && prevK > overbought && currK < overbought && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+    if(prevK > prevD && currK < currD && prevK > overbought && currK < overbought && downtrend && adx > minADX && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double sl = high + 1.2 * atr;
         double entry = close;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -1435,14 +1417,13 @@ bool VWAPBounceStrategySignal()
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
     double body = MathAbs(close - open);
-    if(body < minBodyRatio * atr) return false;
     double candleRange = high - low;
-    bool strongBull = (close >= high - 0.2 * candleRange);
-    bool strongBear = (close <= low + 0.2 * candleRange);
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    // Removed: if(body < minBodyRatio * atr) return false;
+    // Removed: bool strongBull = (close >= high - 0.2 * candleRange);
+    // Removed: bool strongBear = (close <= low + 0.2 * candleRange);
 
     // --- Buy bounce: price dips below VWAP and closes above, uptrend, limit trades ---
-    if(low < vwap && close > vwap && uptrend && adx > minADX && macd > macdSig && strongBull && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
+    if(low < vwap && close > vwap && uptrend && adx > minADX && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double sl = low - 1.2 * atr;
         double entry = close;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -1459,7 +1440,7 @@ bool VWAPBounceStrategySignal()
         }
     }
     // --- Sell bounce: price spikes above VWAP and closes below, downtrend, limit trades ---
-    if(high > vwap && close < vwap && downtrend && adx > minADX && macd < macdSig && strongBear && (currentBar - lastSellBar > consecutiveTradeLimit)) {
+    if(high > vwap && close < vwap && downtrend && adx > minADX && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double sl = high + 1.2 * atr;
         double entry = close;
         double maxSLDist = GetMaxSLDistance(LotSize);
