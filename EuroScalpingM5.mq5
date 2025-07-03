@@ -738,9 +738,21 @@ void CheckEntryConditions()
     if(RangeBreakoutSignal()) return;
 }
 
+// Helper: Calculate max SL price distance for given lot size
+// Returns price distance (in price units, not points)
+double GetMaxSLDistance(double lot) {
+    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if(tickValue == 0 || tickSize == 0) return 0;
+    double points = (MaxSLAmount / (tickValue * lot)) * tickSize / point;
+    return points * point;
+} 
+
 // Strategy 1: Support/Resistance Bounce Strategy
 bool SupportResistanceBounceSignal()
 {
+    Print("[SR Bounce] Checking Support/Resistance Bounce Signal...");
     int shift = 1;
     double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     double minBodyRatio = 0.3;
@@ -751,24 +763,26 @@ bool SupportResistanceBounceSignal()
     // --- ATR filter ---
     int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
     double atrBuffer[2];
-    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); Print("[SR Bounce] ATR buffer copy failed"); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    if(atr < minATR) return false;
+    Print("[SR Bounce] ATR=", atr, " minATR=", minATR);
+    if(atr < minATR) { Print("[SR Bounce] ATR too low"); return false; }
 
     // --- RSI filter ---
     int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
     double rsiBuffer[1];
-    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
+    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); Print("[SR Bounce] RSI buffer copy failed"); return false; }
     double rsi = rsiBuffer[0];
     IndicatorRelease(rsiHandle);
+    Print("[SR Bounce] RSI=", rsi);
 
     // --- Get H1 and H4 S/R levels (using pivot points) ---
     double h1High[50], h1Low[50], h4High[50], h4Low[50];
-    if(CopyHigh(_Symbol, PERIOD_H1, 1, 50, h1High) <= 0) return false;
-    if(CopyLow(_Symbol, PERIOD_H1, 1, 50, h1Low) <= 0) return false;
-    if(CopyHigh(_Symbol, PERIOD_H4, 1, 50, h4High) <= 0) return false;
-    if(CopyLow(_Symbol, PERIOD_H4, 1, 50, h4Low) <= 0) return false;
+    if(CopyHigh(_Symbol, PERIOD_H1, 1, 50, h1High) <= 0) { Print("[SR Bounce] H1 High copy failed"); return false; }
+    if(CopyLow(_Symbol, PERIOD_H1, 1, 50, h1Low) <= 0) { Print("[SR Bounce] H1 Low copy failed"); return false; }
+    if(CopyHigh(_Symbol, PERIOD_H4, 1, 50, h4High) <= 0) { Print("[SR Bounce] H4 High copy failed"); return false; }
+    if(CopyLow(_Symbol, PERIOD_H4, 1, 50, h4Low) <= 0) { Print("[SR Bounce] H4 Low copy failed"); return false; }
 
     // Find significant S/R levels
     double supportLevel = 0, resistanceLevel = 0;
@@ -797,6 +811,7 @@ bool SupportResistanceBounceSignal()
             resistanceLevel = h1High[i];
         }
     }
+    Print("[SR Bounce] supportLevel=", supportLevel, " resistanceLevel=", resistanceLevel);
 
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -805,30 +820,30 @@ bool SupportResistanceBounceSignal()
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
     double body = MathAbs(close - open);
-    
+    Print("[SR Bounce] Candle body=", body);
     // --- Candle quality check ---
-    if(body < minBodyRatio * atr) return false;
+    if(body < minBodyRatio * atr) { Print("[SR Bounce] Candle body too small"); return false; }
     double candleRange = high - low;
     bool strongBull = (close >= high - 0.3 * candleRange);
     bool strongBear = (close <= low + 0.3 * candleRange);
+    Print("[SR Bounce] strongBull=", strongBull, " strongBear=", strongBear);
 
     double bounceDistance = 10 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    
     // Buy signal: Bounce off support
     if(supportLevel > 0 && low <= supportLevel + bounceDistance && close > supportLevel && 
        rsi > 35 && rsi < 60 && strongBull && (currentBar - lastBuyBar_SRBounce > consecutiveTradeLimit)) {
+        Print("[SR Bounce] Buy signal detected");
         double sl = supportLevel - 6 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
         double entry = ask;
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = entry + 12 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 12 pips target
-        
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
         double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
         double commission = CalculateCommissionOrSpread(LotSize);
-        if(expectedProfit < commission) return false;
-        
+        Print("[SR Bounce] Buy: entry=", entry, " sl=", sl, " tp=", tp, " expectedProfit=", expectedProfit, " commission=", commission);
+        if(expectedProfit < commission) { Print("[SR Bounce] Expected profit less than commission"); return false; }
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "SR Bounce Buy")) {
             lastBuyBar_SRBounce = currentBar;
             return true;
@@ -838,30 +853,31 @@ bool SupportResistanceBounceSignal()
     // Sell signal: Bounce off resistance
     if(resistanceLevel > 0 && high >= resistanceLevel - bounceDistance && close < resistanceLevel && 
        rsi > 40 && rsi < 65 && strongBear && (currentBar - lastSellBar_SRBounce > consecutiveTradeLimit)) {
+        Print("[SR Bounce] Sell signal detected");
         double sl = resistanceLevel + 6 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
         double entry = bid;
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = entry - 12 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 12 pips target
-        
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
         double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
         double commission = CalculateCommissionOrSpread(LotSize);
-        if(expectedProfit < commission) return false;
-        
+        Print("[SR Bounce] Sell: entry=", entry, " sl=", sl, " tp=", tp, " expectedProfit=", expectedProfit, " commission=", commission);
+        if(expectedProfit < commission) { Print("[SR Bounce] Expected profit less than commission"); return false; }
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "SR Bounce Sell")) {
             lastSellBar_SRBounce = currentBar;
             return true;
         }
     }
-    
+    Print("[SR Bounce] No valid signal found");
     return false;
 }
 
 // Strategy 2: Moving Average Crossover Strategy
 bool MovingAverageCrossoverSignal()
 {
+    Print("[MA Cross] Checking Moving Average Crossover Signal...");
     int shift = 1;
     double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     double minBodyRatio = 0.3;
@@ -872,34 +888,38 @@ bool MovingAverageCrossoverSignal()
     // --- ATR filter ---
     int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
     double atrBuffer[2];
-    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); Print("[MA Cross] ATR buffer copy failed"); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    if(atr < minATR) return false;
+    Print("[MA Cross] ATR=", atr, " minATR=", minATR);
+    if(atr < minATR) { Print("[MA Cross] ATR too low"); return false; }
 
     // --- EMA 8 and 21 ---
     int emaFastHandle = iMA(_Symbol, PERIOD_CURRENT, 8, 0, MODE_EMA, PRICE_CLOSE);
     int emaSlowHandle = iMA(_Symbol, PERIOD_CURRENT, 21, 0, MODE_EMA, PRICE_CLOSE);
     double emaFast[3], emaSlow[3];
-    if(CopyBuffer(emaFastHandle, 0, shift, 3, emaFast) <= 0) { IndicatorRelease(emaFastHandle); return false; }
-    if(CopyBuffer(emaSlowHandle, 0, shift, 3, emaSlow) <= 0) { IndicatorRelease(emaSlowHandle); return false; }
+    if(CopyBuffer(emaFastHandle, 0, shift, 3, emaFast) <= 0) { IndicatorRelease(emaFastHandle); Print("[MA Cross] EMA Fast buffer copy failed"); return false; }
+    if(CopyBuffer(emaSlowHandle, 0, shift, 3, emaSlow) <= 0) { IndicatorRelease(emaSlowHandle); Print("[MA Cross] EMA Slow buffer copy failed"); return false; }
     IndicatorRelease(emaFastHandle);
     IndicatorRelease(emaSlowHandle);
+    Print("[MA Cross] EMA Fast=", emaFast[0], " EMA Slow=", emaSlow[0]);
 
     // --- RSI momentum confirmation ---
     int rsiHandle = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE);
     double rsiBuffer[1];
-    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); return false; }
+    if(CopyBuffer(rsiHandle, 0, shift, 1, rsiBuffer) <= 0) { IndicatorRelease(rsiHandle); Print("[MA Cross] RSI buffer copy failed"); return false; }
     double rsi = rsiBuffer[0];
     IndicatorRelease(rsiHandle);
+    Print("[MA Cross] RSI=", rsi);
 
     // --- MACD for momentum ---
     int macdHandle = iMACD(_Symbol, PERIOD_CURRENT, 12, 26, 9, PRICE_CLOSE);
     double macdMain[1], macdSignal[1];
-    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); return false; }
-    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); return false; }
+    if(CopyBuffer(macdHandle, 0, shift, 1, macdMain) <= 0) { IndicatorRelease(macdHandle); Print("[MA Cross] MACD Main buffer copy failed"); return false; }
+    if(CopyBuffer(macdHandle, 1, shift, 1, macdSignal) <= 0) { IndicatorRelease(macdHandle); Print("[MA Cross] MACD Signal buffer copy failed"); return false; }
     double macd = macdMain[0], macdSig = macdSignal[0];
     IndicatorRelease(macdHandle);
+    Print("[MA Cross] MACD=", macd, " MACD Signal=", macdSig);
 
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -908,20 +928,22 @@ bool MovingAverageCrossoverSignal()
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
     double body = MathAbs(close - open);
-    
+    Print("[MA Cross] Candle body=", body);
     // --- Candle quality check ---
-    if(body < minBodyRatio * atr) return false;
+    if(body < minBodyRatio * atr) { Print("[MA Cross] Candle body too small"); return false; }
     double candleRange = high - low;
     bool strongBull = (close >= high - 0.3 * candleRange);
     bool strongBear = (close <= low + 0.3 * candleRange);
+    Print("[MA Cross] strongBull=", strongBull, " strongBear=", strongBear);
 
     // Check for crossover and momentum
     bool bullishCrossover = (emaFast[0] > emaSlow[0] && emaFast[1] <= emaSlow[1]);
     bool bearishCrossover = (emaFast[0] < emaSlow[0] && emaFast[1] >= emaSlow[1]);
-    
+    Print("[MA Cross] bullishCrossover=", bullishCrossover, " bearishCrossover=", bearishCrossover);
     // Price confirmation (close above/below both MAs)
     bool priceAboveMAs = (close > emaFast[0] && close > emaSlow[0]);
     bool priceBelowMAs = (close < emaFast[0] && close < emaSlow[0]);
+    Print("[MA Cross] priceAboveMAs=", priceAboveMAs, " priceBelowMAs=", priceBelowMAs);
 
     // Find previous swing high/low for SL
     double swingHigh = high, swingLow = low;
@@ -935,6 +957,7 @@ bool MovingAverageCrossoverSignal()
     // Buy signal: Bullish crossover with momentum
     if(bullishCrossover && priceAboveMAs && rsi > 50 && macd > macdSig && strongBull && 
        (currentBar - lastBuyBar_MACross > consecutiveTradeLimit)) {
+        Print("[MA Cross] Buy signal detected");
         double sl = swingLow - 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
         double entry = ask;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -944,13 +967,12 @@ bool MovingAverageCrossoverSignal()
             sl = entry - 7 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
         }
         double tp = entry + 15 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 15 pips target
-        
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
         double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
         double commission = CalculateCommissionOrSpread(LotSize);
-        if(expectedProfit < commission) return false;
-        
+        Print("[MA Cross] Buy: entry=", entry, " sl=", sl, " tp=", tp, " expectedProfit=", expectedProfit, " commission=", commission);
+        if(expectedProfit < commission) { Print("[MA Cross] Expected profit less than commission"); return false; }
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "MA Cross Buy")) {
             lastBuyBar_MACross = currentBar;
             return true;
@@ -960,6 +982,7 @@ bool MovingAverageCrossoverSignal()
     // Sell signal: Bearish crossover with momentum
     if(bearishCrossover && priceBelowMAs && rsi < 50 && macd < macdSig && strongBear && 
        (currentBar - lastSellBar_MACross > consecutiveTradeLimit)) {
+        Print("[MA Cross] Sell signal detected");
         double sl = swingHigh + 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
         double entry = bid;
         double maxSLDist = GetMaxSLDistance(LotSize);
@@ -969,25 +992,25 @@ bool MovingAverageCrossoverSignal()
             sl = entry + 7 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
         }
         double tp = entry - 15 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // 15 pips target
-        
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
         double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
         double commission = CalculateCommissionOrSpread(LotSize);
-        if(expectedProfit < commission) return false;
-        
+        Print("[MA Cross] Sell: entry=", entry, " sl=", sl, " tp=", tp, " expectedProfit=", expectedProfit, " commission=", commission);
+        if(expectedProfit < commission) { Print("[MA Cross] Expected profit less than commission"); return false; }
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "MA Cross Sell")) {
             lastSellBar_MACross = currentBar;
             return true;
         }
     }
-    
+    Print("[MA Cross] No valid signal found");
     return false;
 }
 
 // Strategy 3: Range Breakout Strategy (Asian Session Focus)
 bool RangeBreakoutSignal()
 {
+    Print("[Range Break] Checking Range Breakout Signal...");
     int rangeBars = 20; // Extended for Asian session range
     int shift = 1;
     double minATR = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
@@ -1001,27 +1024,31 @@ bool RangeBreakoutSignal()
     TimeToStruct(TimeCurrent(), timeStruct);
     int currentHour = timeStruct.hour;
     bool asianSessionRange = (currentHour >= 23 || currentHour <= 6);
-    
+    Print("[Range Break] currentHour=", currentHour, " asianSessionRange=", asianSessionRange);
+
     // --- ATR filter ---
     int atrHandle = iATR(_Symbol, PERIOD_CURRENT, 14);
     double atrBuffer[2];
-    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); return false; }
+    if(CopyBuffer(atrHandle, 0, shift, 2, atrBuffer) <= 0) { IndicatorRelease(atrHandle); Print("[Range Break] ATR buffer copy failed"); return false; }
     double atr = atrBuffer[0];
     IndicatorRelease(atrHandle);
-    if(atr < minATR) return false;
+    Print("[Range Break] ATR=", atr, " minATR=", minATR);
+    if(atr < minATR) { Print("[Range Break] ATR too low"); return false; }
 
     // --- Volume confirmation (using tick volume) ---
-    double volumes[3];
-    if(CopyTickVolume(_Symbol, PERIOD_CURRENT, shift, 3, volumes) <= 0) return false;
+    long volumes[3];
+    if(CopyTickVolume(_Symbol, PERIOD_CURRENT, shift, 3, volumes) <= 0) { Print("[Range Break] Tick volume copy failed"); return false; }
     double avgVolume = (volumes[0] + volumes[1] + volumes[2]) / 3;
     bool volumeSpike = volumes[0] > avgVolume * 1.5;
+    Print("[Range Break] volumes=", volumes[0], ", ", volumes[1], ", ", volumes[2], " avgVolume=", avgVolume, " volumeSpike=", volumeSpike);
 
     // --- ADX for trend strength ---
     int adxHandle = iADX(_Symbol, PERIOD_CURRENT, 14);
     double adxBuffer[1];
-    if(CopyBuffer(adxHandle, 0, shift, 1, adxBuffer) <= 0) { IndicatorRelease(adxHandle); return false; }
+    if(CopyBuffer(adxHandle, 0, shift, 1, adxBuffer) <= 0) { IndicatorRelease(adxHandle); Print("[Range Break] ADX buffer copy failed"); return false; }
     double adx = adxBuffer[0];
     IndicatorRelease(adxHandle);
+    Print("[Range Break] ADX=", adx);
 
     // --- Range calculation ---
     double rangeHigh = iHigh(_Symbol, PERIOD_CURRENT, 1);
@@ -1034,7 +1061,8 @@ bool RangeBreakoutSignal()
     }
     double rangeHeight = rangeHigh - rangeLow;
     double minRangeHeight = 8 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    if(rangeHeight < minRangeHeight) return false;
+    Print("[Range Break] rangeHigh=", rangeHigh, " rangeLow=", rangeLow, " rangeHeight=", rangeHeight, " minRangeHeight=", minRangeHeight);
+    if(rangeHeight < minRangeHeight) { Print("[Range Break] Range height too small"); return false; }
 
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -1043,30 +1071,30 @@ bool RangeBreakoutSignal()
     double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
     double low = iLow(_Symbol, PERIOD_CURRENT, shift);
     double body = MathAbs(close - open);
-    
+    Print("[Range Break] Candle body=", body);
     // --- Candle quality check ---
-    if(body < minBodyRatio * atr) return false;
+    if(body < minBodyRatio * atr) { Print("[Range Break] Candle body too small"); return false; }
     double candleRange = high - low;
     bool strongBull = (close >= high - 0.3 * candleRange);
     bool strongBear = (close <= low + 0.3 * candleRange);
+    Print("[Range Break] strongBull=", strongBull, " strongBear=", strongBear);
 
     double breakoutBuffer = 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-
     // Buy signal: Breakout above range
     if(ask > rangeHigh + breakoutBuffer && volumeSpike && adx > 15 && strongBull && 
        (currentBar - lastBuyBar_RangeBreak > consecutiveTradeLimit)) {
+        Print("[Range Break] Buy signal detected");
         double sl = rangeHigh - 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Stop back inside range
         double entry = ask;
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = entry + rangeHeight; // Target = range height projected
-        
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
         double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
         double commission = CalculateCommissionOrSpread(LotSize);
-        if(expectedProfit < commission) return false;
-        
+        Print("[Range Break] Buy: entry=", entry, " sl=", sl, " tp=", tp, " expectedProfit=", expectedProfit, " commission=", commission);
+        if(expectedProfit < commission) { Print("[Range Break] Expected profit less than commission"); return false; }
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Range Break Buy")) {
             lastBuyBar_RangeBreak = currentBar;
             return true;
@@ -1076,23 +1104,23 @@ bool RangeBreakoutSignal()
     // Sell signal: Breakout below range
     if(bid < rangeLow - breakoutBuffer && volumeSpike && adx > 15 && strongBear && 
        (currentBar - lastSellBar_RangeBreak > consecutiveTradeLimit)) {
+        Print("[Range Break] Sell signal detected");
         double sl = rangeLow + 2 * SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Stop back inside range
         double entry = bid;
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = entry - rangeHeight; // Target = range height projected
-        
         double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
         double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
         double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
         double commission = CalculateCommissionOrSpread(LotSize);
-        if(expectedProfit < commission) return false;
-        
+        Print("[Range Break] Sell: entry=", entry, " sl=", sl, " tp=", tp, " expectedProfit=", expectedProfit, " commission=", commission);
+        if(expectedProfit < commission) { Print("[Range Break] Expected profit less than commission"); return false; }
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Range Break Sell")) {
             lastSellBar_RangeBreak = currentBar;
             return true;
         }
     }
-    
+    Print("[Range Break] No valid signal found");
     return false;
 }
