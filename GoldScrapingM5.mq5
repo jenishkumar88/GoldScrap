@@ -868,6 +868,7 @@ bool TrendMACrossStrategySignal()
     IndicatorRelease(fastMAH1Handle); IndicatorRelease(slowMAH1Handle);
     double fastH1 = fastMAH1[0], slowH1 = slowMAH1[0];
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    
     // --- Buy signal ---
     if(crossUp && rsi > 55 && macd > 0 && fastH1 > slowH1) {
         // SL: recent swing low
