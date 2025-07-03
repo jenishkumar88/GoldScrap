@@ -833,6 +833,11 @@ bool BreakoutStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Breakout Buy")) {
             lastBuyBar = currentBar;
             return true;
@@ -845,6 +850,11 @@ bool BreakoutStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Breakout Sell")) {
             lastSellBar = currentBar;
             return true;
@@ -936,7 +946,13 @@ bool PullbackScalpingStrategySignal()
             double entry = close;
             double maxSLDist = GetMaxSLDistance(LotSize);
             if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
-            OpenTrade(ORDER_TYPE_BUY, sl, close + (close - sl) * 1.5, "Pullback PinBar Buy");
+            double tp = close + (close - sl) * 1.5;
+            double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+            double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+            double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+            double commission = CalculateCommissionOrSpread(LotSize);
+            if(expectedProfit < commission) return false;
+            OpenTrade(ORDER_TYPE_BUY, sl, tp, "Pullback PinBar Buy");
             lastBuyBar = currentBar;
             return true;
         }
@@ -948,7 +964,13 @@ bool PullbackScalpingStrategySignal()
             double entry = close;
             double maxSLDist = GetMaxSLDistance(LotSize);
             if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
-            OpenTrade(ORDER_TYPE_SELL, sl, close - (sl - close) * 1.5, "Pullback PinBar Sell");
+            double tp = close - (sl - close) * 1.5;
+            double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+            double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+            double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+            double commission = CalculateCommissionOrSpread(LotSize);
+            if(expectedProfit < commission) return false;
+            OpenTrade(ORDER_TYPE_SELL, sl, tp, "Pullback PinBar Sell");
             lastSellBar = currentBar;
             return true;
         }
@@ -1038,6 +1060,11 @@ bool TrendMACrossStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "MA Cross Buy")) {
             lastBuyBar = currentBar;
             return true;
@@ -1050,6 +1077,11 @@ bool TrendMACrossStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "MA Cross Sell")) {
             lastSellBar = currentBar;
             return true;
@@ -1167,8 +1199,13 @@ bool BollingerBandBreakoutStrategySignal()
     double entryBuy = close;
     double maxSLDist = GetMaxSLDistance(LotSize);
     if((entryBuy - slBuy) > maxSLDist) slBuy = entryBuy - maxSLDist;
+    double commission = CalculateCommissionOrSpread(LotSize);
     if(close > upper[1] + buffer && rsi > rsiBuy && uptrend && retestBuy && strongBull && macd > macdSig && (currentBar - lastBuyBar > consecutiveTradeLimit)) {
         double tp = close + (close - slBuy) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entryBuy) / tick_size) * tick_value * LotSize;
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_BUY, slBuy, tp, "BB Breakout Buy")) {
             lastBuyBar = currentBar;
             return true;
@@ -1180,6 +1217,11 @@ bool BollingerBandBreakoutStrategySignal()
     if((slSell - entrySell) > maxSLDist) slSell = entrySell + maxSLDist;
     if(close < lower[1] - buffer && rsi < rsiSell && downtrend && retestSell && strongBear && macd < macdSig && (currentBar - lastSellBar > consecutiveTradeLimit)) {
         double tp = close - (slSell - close) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entrySell - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_SELL, slSell, tp, "BB Breakout Sell")) {
             lastSellBar = currentBar;
             return true;
@@ -1279,6 +1321,11 @@ bool StochasticReversalStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "Stoch Reversal Buy")) {
             lastBuyBar = currentBar;
             return true;
@@ -1291,6 +1338,11 @@ bool StochasticReversalStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "Stoch Reversal Sell")) {
             lastSellBar = currentBar;
             return true;
@@ -1390,6 +1442,11 @@ bool VWAPBounceStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((entry - sl) > maxSLDist) sl = entry - maxSLDist;
         double tp = close + (close - sl) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((tp - entry) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_BUY, sl, tp, "VWAP Bounce Buy")) {
             lastBuyBar = currentBar;
             return true;
@@ -1402,6 +1459,11 @@ bool VWAPBounceStrategySignal()
         double maxSLDist = GetMaxSLDistance(LotSize);
         if((sl - entry) > maxSLDist) sl = entry + maxSLDist;
         double tp = close - (sl - close) * 1.5;
+        double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+        double expectedProfit = ((entry - tp) / tick_size) * tick_value * LotSize;
+        double commission = CalculateCommissionOrSpread(LotSize);
+        if(expectedProfit < commission) return false;
         if(OpenTrade(ORDER_TYPE_SELL, sl, tp, "VWAP Bounce Sell")) {
             lastSellBar = currentBar;
             return true;
