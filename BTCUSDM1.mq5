@@ -746,12 +746,12 @@ void CheckVWAPMomentumFlip()
     int rsiHandle = -1;
     
     // Create indicator handles
-    vwapHandle = iCustom(_Symbol, PERIOD_M1, "VWAP", 0); // Assuming you have VWAP indicator
+   /* vwapHandle = iCustom(_Symbol, PERIOD_M1, "VWAP", 0); // Assuming you have VWAP indicator
     if(vwapHandle == INVALID_HANDLE)
-    {
+    {*/
         // Fallback: use SMA as proxy for VWAP if custom indicator not available
         vwapHandle = iMA(_Symbol, PERIOD_M1, 20, 0, MODE_SMA, PRICE_TYPICAL);
-    }
+  //  }
     
     emaHandle = iMA(_Symbol, PERIOD_M1, 20, 0, MODE_EMA, PRICE_CLOSE);
     rsiHandle = iRSI(_Symbol, PERIOD_M1, 14, PRICE_CLOSE);
